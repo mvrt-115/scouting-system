@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --background: #f6f1ff;
+  --background-elevated: rgba(255, 255, 255, 0.88);
+  --background-muted: #ede2ff;
+  --foreground: #2e1065;
+  --foreground-soft: #6b5a8e;
+  --border: rgba(147, 51, 234, 0.18);
+  --accent: #7c3aed;
+  --accent-strong: #6d28d9;
+  --accent-soft: rgba(124, 58, 237, 0.12);
+  --secondary: #8b5cf6;
+  --secondary-soft: rgba(139, 92, 246, 0.14);
+  --shadow-color: rgba(88, 28, 135, 0.14);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #17141f;
+  --background-elevated: rgba(28, 24, 36, 0.94);
+  --background-muted: #221d2c;
+  --foreground: #f5f3ff;
+  --foreground-soft: #cfc7df;
+  --border: rgba(168, 85, 247, 0.12);
+  --accent: #a855f7;
+  --accent-strong: #c084fc;
+  --accent-soft: rgba(168, 85, 247, 0.12);
+  --secondary: #8b5cf6;
+  --secondary-soft: rgba(139, 92, 246, 0.12);
+  --shadow-color: rgba(0, 0, 0, 0.28);
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(168, 85, 247, 0.14), transparent 28%),
+    radial-gradient(circle at top right, rgba(139, 92, 246, 0.1), transparent 24%),
+    linear-gradient(180deg, var(--background) 0%, color-mix(in srgb, var(--background) 92%, black 8%) 100%);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+.dark body {
+  background: linear-gradient(180deg, #17141f 0%, #141119 100%);
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--foreground);
+}
+
+a,
+button,
+input,
+select,
+textarea {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease,
+    transform 180ms ease;
+}
