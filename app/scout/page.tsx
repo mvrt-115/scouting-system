@@ -2,7 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { Loader2, ShieldAlert, CheckCircle2, CloudOff } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
@@ -68,7 +68,7 @@ function ScoutPageInner() {
     const loadCurrentEvent = async () => {
       try {
         if (!searchParams.get('year') || !searchParams.get('regional')) {
-          const settingsSnap = await getDoc(doc(db, 'settings', 'currentEvent'));
+          const settingsSnap = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
           if (settingsSnap.exists()) {
             const data = settingsSnap.data();
             if (!searchParams.get('year') && data.year) setYear(String(data.year));
@@ -167,7 +167,7 @@ function ScoutPageInner() {
 
       try {
         const docId = `qm${numericMatch}_${user.uid}`;
-        const existingSnap = await getDoc(doc(db, 'years', trimmedYear, 'regionals', trimmedRegional, 'teams', String(numericTeam), 'matches', docId));
+        const existingSnap = await getDocFromServer(doc(db, 'years', trimmedYear, 'regionals', trimmedRegional, 'teams', String(numericTeam), 'matches', docId));
 
         if (!existingSnap.exists()) {
           setHasLoadedExistingSubmission(true);

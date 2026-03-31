@@ -3,7 +3,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { updateProfile } from 'firebase/auth';
 import { ImagePlus, Loader2, Save, Settings, Shield, Trash2, UserCog, ArrowRightLeft, Users, ArrowRight } from 'lucide-react';
 import { auth, db } from '@/lib/firebase';
@@ -183,7 +183,7 @@ export default function SettingsPage() {
 
   const removeExpiredPendingUsers = useCallback(async () => {
     const now = Date.now();
-    const usersSnapshot = await getDocs(collection(db, 'users'));
+    const usersSnapshot = await getDocsFromServer(collection(db, 'users'));
     const staleUsers = usersSnapshot.docs
       .map((userDoc) => ({ id: userDoc.id, ...(userDoc.data() as any) }))
       .filter((entry: any) => {
@@ -195,7 +195,7 @@ export default function SettingsPage() {
     await Promise.all(
       staleUsers.map(async (entry: any) => {
         await deleteDoc(doc(db, 'users', entry.id));
-        const assignmentsSnapshot = await getDocs(query(collection(db, 'assignments'), where('userId', '==', entry.id)));
+        const assignmentsSnapshot = await getDocsFromServer(query(collection(db, 'assignments'), where('userId', '==', entry.id)));
         await Promise.all(assignmentsSnapshot.docs.map((assignmentDoc) => deleteDoc(doc(db, 'assignments', assignmentDoc.id))));
       })
     );
@@ -211,9 +211,9 @@ export default function SettingsPage() {
       const removedCount = await removeExpiredPendingUsers();
 
       const [settingsDoc, usersSnapshot, yearsSnapshot] = await Promise.all([
-        getDoc(doc(db, 'settings', 'currentEvent')),
-        getDocs(collection(db, 'users')),
-        getDocs(collection(db, 'years')),
+        getDocFromServer(doc(db, 'settings', 'currentEvent')),
+        getDocsFromServer(collection(db, 'users')),
+        getDocsFromServer(collection(db, 'years')),
       ]);
 
       if (settingsDoc.exists()) {
@@ -252,7 +252,7 @@ export default function SettingsPage() {
 
   const loadRegionals = useCallback(async (yearValue: string) => {
     await ensurePracticeRegional(yearValue);
-    const snapshot = await getDocs(collection(db, `years/${yearValue}/regionals`));
+    const snapshot = await getDocsFromServer(collection(db, `years/${yearValue}/regionals`));
     const nextRegionals = snapshot.docs
       .map((entry) => ({ code: entry.id, name: String((entry.data() as any).name || entry.id) }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -298,7 +298,7 @@ export default function SettingsPage() {
         });
       }
 
-      const existingUser = await getDoc(doc(db, 'users', user.uid));
+      const existingUser = await getDocFromServer(doc(db, 'users', user.uid));
       await setDoc(
         doc(db, 'users', user.uid),
         {
@@ -392,10 +392,10 @@ export default function SettingsPage() {
   const handleDeleteUser = async (entry: AdminUser) => {
     await deleteDoc(doc(db, 'users', entry.id));
     // Delete user's assignments across all years (simplified - in practice you might want to track which years)
-    const yearsSnapshot = await getDocs(collection(db, 'years'));
+    const yearsSnapshot = await getDocsFromServer(collection(db, 'years'));
     await Promise.all(yearsSnapshot.docs.map(async (yearDoc) => {
       const yearId = yearDoc.id;
-      const assignmentsSnapshot = await getDocs(query(collection(db, `years/${yearId}/assignments`), where('userId', '==', entry.id)));
+      const assignmentsSnapshot = await getDocsFromServer(query(collection(db, `years/${yearId}/assignments`), where('userId', '==', entry.id)));
       await Promise.all(assignmentsSnapshot.docs.map((assignmentDoc) => deleteDoc(doc(db, `years/${yearId}/assignments`, assignmentDoc.id))));
     }));
     setUsers((current) => current.filter((userEntry) => userEntry.id !== entry.id));
@@ -406,8 +406,8 @@ export default function SettingsPage() {
     if (!user || isAdmin) return;
     try {
       const [assignmentsSnap, usersSnap] = await Promise.all([
-        getDocs(query(collection(db, `years/${selectedYear}/assignments`), where('userId', '==', user.uid))),
-        getDocs(collection(db, 'users')),
+        getDocsFromServer(query(collection(db, `years/${selectedYear}/assignments`), where('userId', '==', user.uid))),
+        getDocsFromServer(collection(db, 'users')),
       ]);
       const myAssigns = assignmentsSnap.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))

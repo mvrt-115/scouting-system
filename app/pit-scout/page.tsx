@@ -2,9 +2,10 @@
 
 import { FormEvent, Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { doc, getDoc } from 'firebase/firestore';
-import { Loader2, ShieldAlert, CheckCircle2, Wrench, Bot, Target, MapPin, Brain, Trophy, MessageSquare, Weight, Ruler } from 'lucide-react';
-import { db } from '@/lib/firebase';
+import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { Loader2, ShieldAlert, CheckCircle2, Wrench, Bot, Target, MapPin, Brain, Trophy, MessageSquare, Weight, Ruler, Upload, X, ImageIcon, Users } from 'lucide-react';
+import { db, storage } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { queuePitSubmission, savePitPayload } from '@/lib/offlineQueue';
 import { StarRatingInput } from '@/components/StarRatingInput';
@@ -48,15 +49,21 @@ function PitScoutPageInner() {
   // Strategy & Notes
   const [playStyle, setPlayStyle] = useState<'offense' | 'defense' | 'hybrid'>('offense');
   const [humanPlayerSkill, setHumanPlayerSkill] = useState(0);
+  const [driverExperience, setDriverExperience] = useState(0);
+  const [driverNotes, setDriverNotes] = useState('');
   const [strengths, setStrengths] = useState('');
   const [weaknesses, setWeaknesses] = useState('');
   const [notes, setNotes] = useState('');
+
+  // Image Upload
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
 
   useEffect(() => {
     const loadCurrentEvent = async () => {
       try {
         if (!searchParams.get('year') || !searchParams.get('regional')) {
-          const settingsSnap = await getDoc(doc(db, 'settings', 'currentEvent'));
+          const settingsSnap = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
           if (settingsSnap.exists()) {
             const data = settingsSnap.data();
             if (!searchParams.get('year') && data.year) setYear(String(data.year));
@@ -83,6 +90,18 @@ function PitScoutPageInner() {
     return userData?.name || user?.displayName || user?.email || 'Web Scout';
   }, [user, userData]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    
+    const newImages = Array.from(files).filter(file => file.type.startsWith('image/'));
+    setSelectedImages(prev => [...prev, ...newImages].slice(0, 5)); // Max 5 images
+  };
+
+  const removeImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
 
@@ -100,11 +119,30 @@ function PitScoutPageInner() {
     setIsSaving(true);
     setError('');
     setSuccess('');
+    setUploadingImages(false);
 
     try {
       const nowIso = new Date().toISOString();
       const identity = sanitizeIdPart(user.uid || scoutName);
       const docId = `${numericTeam}_${identity}`;
+
+      // Upload images if online
+      const imageUrls: string[] = [];
+      const isOnline = typeof window !== 'undefined' && window.navigator.onLine;
+      
+      if (isOnline && selectedImages.length > 0) {
+        setUploadingImages(true);
+        for (let i = 0; i < selectedImages.length; i++) {
+          const file = selectedImages[i];
+          const storagePath = `years/${trimmedYear}/regionals/${trimmedRegional}/teams/${numericTeam}/pit_images/${docId}_${i}_${Date.now()}.${file.name.split('.').pop()}`;
+          const storageRef = ref(storage, storagePath);
+          
+          await uploadBytes(storageRef, file);
+          const downloadUrl = await getDownloadURL(storageRef);
+          imageUrls.push(downloadUrl);
+        }
+        setUploadingImages(false);
+      }
 
       const pitData = {
         teamNumber: numericTeam,
@@ -124,9 +162,12 @@ function PitScoutPageInner() {
         autoReliability,
         playStyle,
         humanPlayerSkill,
+        driverExperience,
+        driverNotes: driverNotes.trim(),
         strengths: strengths.trim(),
         weaknesses: weaknesses.trim(),
         notes: notes.trim(),
+        images: imageUrls,
         timestamp: nowIso,
       };
 
@@ -138,13 +179,13 @@ function PitScoutPageInner() {
         pitData,
       };
 
-      if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      if (!isOnline) {
         queuePitSubmission(payload);
-        setSuccess(`Saved offline Team ${numericTeam}`);
+        setSuccess(`Saved offline Team ${numericTeam}${selectedImages.length > 0 ? ' (images not uploaded - offline)' : ''}`);
       } else {
         try {
           await savePitPayload(payload);
-          setSuccess(`Saved Team ${numericTeam}`);
+          setSuccess(`Saved Team ${numericTeam}${imageUrls.length > 0 ? ` with ${imageUrls.length} image(s)` : ''}`);
         } catch {
           queuePitSubmission(payload);
           setSuccess(`Saved offline Team ${numericTeam}`);
@@ -165,9 +206,12 @@ function PitScoutPageInner() {
       setAutoReliability(0);
       setPlayStyle('offense');
       setHumanPlayerSkill(0);
+      setDriverExperience(0);
+      setDriverNotes('');
       setStrengths('');
       setWeaknesses('');
       setNotes('');
+      setSelectedImages([]);
     } catch (err: any) {
       setError(err?.message || 'Failed to save pit scouting data.');
     } finally {
@@ -313,6 +357,29 @@ function PitScoutPageInner() {
             )}
           </Section>
 
+          <Section icon={<Trophy className="h-5 w-5" />} title="Drive Team">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Driver Experience">
+                <StarRatingInput label="" value={driverExperience} onChange={setDriverExperience} />
+                <p className="mt-1 text-xs text-slate-500">Rate the driver&apos;s skill and experience</p>
+              </Field>
+              <Field label="Human Player Skill">
+                <StarRatingInput label="" value={humanPlayerSkill} onChange={setHumanPlayerSkill} />
+              </Field>
+            </div>
+            <div className="mt-4">
+              <Field label="Driver Notes">
+                <textarea
+                  value={driverNotes}
+                  onChange={(e) => setDriverNotes(e.target.value)}
+                  rows={3}
+                  className={`${inputClassName} resize-y`}
+                  placeholder="Describe the drive team experience, communication style, or any notable observations..."
+                />
+              </Field>
+            </div>
+          </Section>
+
           <Section icon={<Target className="h-5 w-5" />} title="Strategy & Assessment">
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Play Style">
@@ -332,9 +399,6 @@ function PitScoutPageInner() {
                     </button>
                   ))}
                 </div>
-              </Field>
-              <Field label="Human Player Skill" className="sm:col-span-2">
-                <StarRatingInput label="" value={humanPlayerSkill} onChange={setHumanPlayerSkill} />
               </Field>
             </div>
 
@@ -360,6 +424,55 @@ function PitScoutPageInner() {
             </div>
           </Section>
 
+          <Section icon={<ImageIcon className="h-5 w-5" />} title="Robot Photos">
+            <div className="space-y-4">
+              <Field label="Upload Images (Max 5)">
+                <div className="flex items-center gap-4">
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-purple-200 bg-white px-4 py-3 text-sm font-bold text-purple-700 transition-colors hover:bg-purple-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-purple-300 dark:hover:bg-zinc-800">
+                    <Upload className="h-4 w-4" />
+                    Choose Photos
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={handleImageSelect}
+                      className="hidden"
+                      disabled={selectedImages.length >= 5}
+                    />
+                  </label>
+                  <span className="text-sm text-slate-500">
+                    {selectedImages.length}/5 selected
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Photos will be uploaded when you save (online only)</p>
+              </Field>
+
+              {selectedImages.length > 0 && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                  {selectedImages.map((file, index) => (
+                    <div key={index} className="relative aspect-square rounded-lg border border-purple-200 bg-slate-100 dark:border-zinc-700 dark:bg-zinc-800">
+                      <img
+                        src={URL.createObjectURL(file)}
+                        alt={`Selected ${index + 1}`}
+                        className="h-full w-full rounded-lg object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(index)}
+                        className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-transform hover:scale-110"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                      <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Section>
+
           <Section icon={<MessageSquare className="h-5 w-5" />} title="Additional Notes">
             <Field label="General Notes">
               <textarea
@@ -380,10 +493,10 @@ function PitScoutPageInner() {
             {isSaving ? (
               <span className="inline-flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Saving...
+                {uploadingImages ? 'Uploading images...' : 'Saving...'}
               </span>
             ) : (
-              'Save Pit Scouting'
+              `Save Pit Scouting${selectedImages.length > 0 ? ` (${selectedImages.length} image${selectedImages.length > 1 ? 's' : ''})` : ''}`
             )}
           </button>
         </form>

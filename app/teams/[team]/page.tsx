@@ -3,13 +3,12 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { addDoc, collection, getDocs, query, where } from 'firebase/firestore';
-import { ArrowLeft, Loader2, MessageSquare, Star } from 'lucide-react';
+import { addDoc, collection, getDocs, getDocsFromServer, query, where } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { useMatchDataCache } from '@/hooks/useMatchDataCache';
 import { RebuiltFieldMapDisplay } from '@/components/scouting/RebuiltFieldMap';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 
 export default function TeamPage({ params }: { params: Promise<{ team: string }> }) {
   const resolvedParams = use(params);
@@ -64,7 +63,7 @@ export default function TeamPage({ params }: { params: Promise<{ team: string }>
     try {
       // Fetch match data for this team
       const matchesRef = collection(db, `years/${year}/regionals/${regional}/teams/${teamNumber}/matches`);
-      const matchesSnap = await getDocs(matchesRef);
+      const matchesSnap = await getDocsFromServer(matchesRef);
       const matchesData = matchesSnap.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -74,11 +73,11 @@ export default function TeamPage({ params }: { params: Promise<{ team: string }>
       
       // Also fetch Blue Alliance matches for scores
       try {
-        const eventDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+        const eventDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
         if (eventDoc.exists()) {
           const eventData = eventDoc.data();
           const baMatchesRef = collection(db, `years/${eventData.year}/regionals/${eventData.regional}/ba_matches`);
-          const baSnap = await getDocs(baMatchesRef);
+          const baSnap = await getDocsFromServer(baMatchesRef);
           setBaMatchesLocal(baSnap.docs.map(d => ({ id: d.id, ...d.data() })));
         }
       } catch (e) {
@@ -96,7 +95,7 @@ export default function TeamPage({ params }: { params: Promise<{ team: string }>
   const fetchComments = useCallback(async () => {
     setIsLoading(true);
     try {
-      const commentsSnapshot = await getDocs(collection(db, `years/${year}/regionals/${regional}/teams/${teamNumber}/comments`));
+      const commentsSnapshot = await getDocsFromServer(collection(db, `years/${year}/regionals/${regional}/teams/${teamNumber}/comments`));
       setComments(commentsSnapshot.docs.map((entry) => ({ id: entry.id, ...(entry.data() as any) })).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
     } finally {
       setIsLoading(false);
@@ -109,7 +108,7 @@ export default function TeamPage({ params }: { params: Promise<{ team: string }>
       const path = `years/${year}/regionals/${regional}/teams/${teamNumber}/pit_scouting`;
       console.log('Fetching pit scout data from:', path);
       const pitRef = collection(db, path);
-      const pitSnap = await getDocs(pitRef);
+      const pitSnap = await getDocsFromServer(pitRef);
       console.log('Pit scout docs count:', pitSnap.docs.length);
       console.log('Pit scout docs:', pitSnap.docs.map(d => ({ id: d.id, data: d.data() })));
       const teamPitData = pitSnap.docs

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, setDoc, getDoc, query, where } from 'firebase/firestore';
+import { collection, getDocs, getDocsFromServer, doc, setDoc, getDoc, getDocFromServer, query, where } from 'firebase/firestore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
@@ -86,7 +86,7 @@ export default function Picklist() {
     setIsLoading(true);
     try {
       // 1. Get current event
-      const eventDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+      const eventDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
       if (!eventDoc.exists()) {
         setError('Current event not set. Please set it in the Admin panel.');
         setIsLoading(false);
@@ -97,7 +97,7 @@ export default function Picklist() {
 
       // 2. Get all teams for this event
       const teamsRef = collection(db, `years/${event.year}/regionals/${event.regional}/teams`);
-      const teamsSnap = await getDocs(teamsRef);
+      const teamsSnap = await getDocsFromServer(teamsRef);
       const teamsList = teamsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const sortedTeams = teamsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
       setTeams(sortedTeams);
@@ -106,7 +106,7 @@ export default function Picklist() {
       const matchEntries = await Promise.all(
         sortedTeams.map(async (team) => {
           const matchesRef = collection(db, `years/${event.year}/regionals/${event.regional}/teams/${team.id}/matches`);
-          const matchesSnap = await getDocs(matchesRef);
+          const matchesSnap = await getDocsFromServer(matchesRef);
           const matches = matchesSnap.docs.map((matchDoc) => ({
             id: matchDoc.id,
             ...matchDoc.data()
@@ -121,11 +121,11 @@ export default function Picklist() {
 
       // 4. Get super scout data
       const superScoutRef = collection(db, `years/${event.year}/regionals/${event.regional}/super_scouting`);
-      const superScoutSnap = await getDocs(superScoutRef);
+      const superScoutSnap = await getDocsFromServer(superScoutRef);
       setSuperScoutData(superScoutSnap.docs.map(doc => doc.data()));
 
       // 5. Get existing picklist - now under regional path
-      const picklistDoc = await getDoc(doc(db, `years/${event.year}/regionals/${event.regional}/picklists`, 'main'));
+      const picklistDoc = await getDocFromServer(doc(db, `years/${event.year}/regionals/${event.regional}/picklists`, 'main'));
       if (picklistDoc.exists()) {
         const savedTeams = picklistDoc.data().teams || [];
         // Merge saved picklist with full team data

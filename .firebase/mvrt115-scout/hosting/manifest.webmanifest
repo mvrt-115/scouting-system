@@ -1,0 +1,15 @@
+{
+  "name": "MVRT Super Scout",
+  "short_name": "MVRT Scout",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#140724",
+  "theme_color": "#6d28d9",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

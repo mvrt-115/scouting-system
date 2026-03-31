@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, setDoc } from 'firebase/firestore';
 import { ArrowLeft, CheckCircle2, CloudOff, Loader2, Save, ShieldAlert, Database } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
@@ -42,7 +42,7 @@ export default function SuperScoutPage() {
     setError('');
 
     try {
-      const settingsDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+      const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
       if (!settingsDoc.exists()) throw new Error('Missing event settings.');
 
       const settings = settingsDoc.data() as any;
@@ -91,7 +91,7 @@ export default function SuperScoutPage() {
       }
 
       if (!loadedTeams && nextContext.year && nextContext.regional && nextContext.regionalCode) {
-        const cachedMatchDoc = await getDoc(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/ba_matches`, `${nextContext.regionalCode}_qm${matchNumber}`));
+        const cachedMatchDoc = await getDocFromServer(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/ba_matches`, `${nextContext.regionalCode}_qm${matchNumber}`));
         if (cachedMatchDoc.exists()) {
           const cachedMatch = cachedMatchDoc.data() as any;
           loadedTeams = (cachedMatch?.alliances?.[alliance]?.team_keys || []).map((teamKey: string) => String(teamKey).replace(/^frc/, ''));
@@ -101,7 +101,7 @@ export default function SuperScoutPage() {
 
       // Also check match_teams collection for manually saved teams
       if (!loadedTeams && nextContext.year && nextContext.regional) {
-        const matchTeamDoc = await getDoc(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/match_teams`, `qm${matchNumber}_${alliance}`));
+        const matchTeamDoc = await getDocFromServer(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/match_teams`, `qm${matchNumber}_${alliance}`));
         if (matchTeamDoc.exists()) {
           const matchTeamData = matchTeamDoc.data() as any;
           loadedTeams = matchTeamData.teams || [];
@@ -118,7 +118,7 @@ export default function SuperScoutPage() {
       if (user && nextContext.year && nextContext.regional) {
         try {
           const docId = `qm${matchNumber}_${alliance}_${user.uid}`;
-          const existingDoc = await getDoc(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/super_scouting`, docId));
+          const existingDoc = await getDocFromServer(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/super_scouting`, docId));
           if (existingDoc.exists()) {
             const existingData = existingDoc.data();
             const existingTeams = existingData.teams || nextTeams;

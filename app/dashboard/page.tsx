@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, AlertCircle, Clock, ClipboardList, Edit3, Eye } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, where, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, getDocsFromServer, query, where, doc, getDoc, getDocFromServer, setDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
@@ -21,7 +21,7 @@ export default function Dashboard() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const settingsDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+      const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
       if (settingsDoc.exists()) {
         const data = settingsDoc.data();
         if (data.year) setCurrentYear(data.year);
@@ -38,18 +38,18 @@ export default function Dashboard() {
     setError('');
     try {
       // Fetch match teams data first
-      const matchTeamsSnapshot = await getDocs(collection(db, `years/${currentYear}/regionals/${currentRegional}/match_teams`));
+      const matchTeamsSnapshot = await getDocsFromServer(collection(db, `years/${currentYear}/regionals/${currentRegional}/match_teams`));
       const matchTeamsMap: Record<string, { red?: string[]; blue?: string[] }> = {};
-      matchTeamsSnapshot.docs.forEach((doc) => {
-        const data = doc.data() as any;
+      matchTeamsSnapshot.docs.forEach((d) => {
+        const data = d.data() as any;
         const matchNum = String(data.matchNumber || '');
         if (matchNum) {
           if (!matchTeamsMap[matchNum]) {
             matchTeamsMap[matchNum] = {};
           }
-          if (data.alliance === 'red' || doc.id.includes('red')) {
+          if (data.alliance === 'red' || d.id.includes('red')) {
             matchTeamsMap[matchNum].red = data.teams || [];
-          } else if (data.alliance === 'blue' || doc.id.includes('blue')) {
+          } else if (data.alliance === 'blue' || d.id.includes('blue')) {
             matchTeamsMap[matchNum].blue = data.teams || [];
           }
         }
@@ -58,15 +58,15 @@ export default function Dashboard() {
       // Fetch assignments from the new path: years/{year}/assignments
       const assignmentsRef = collection(db, `years/${currentYear}/assignments`);
       const q = query(assignmentsRef, where('userId', '==', user.uid));
-      const querySnapshot = await getDocs(q);
+      const querySnapshot = await getDocsFromServer(q);
       
       const fetchedAssignments: any[] = [];
-      querySnapshot.forEach((doc) => {
-        fetchedAssignments.push({ id: doc.id, ...doc.data() });
+      querySnapshot.forEach((d) => {
+        fetchedAssignments.push({ id: d.id, ...d.data() });
       });
 
       const apiKey = process.env.NEXT_PUBLIC_TBA_API_KEY;
-      const settingsDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+      const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
       const regionalCode = settingsDoc.exists() ? (settingsDoc.data() as any)?.regionalCode : '';
 
       const normalizedAssignments = await Promise.all(fetchedAssignments.filter((assignment) => {
@@ -174,7 +174,7 @@ export default function Dashboard() {
             try {
               const docId = `qm${matchNum}_${user.uid}`;
               const docRef = doc(db, `years/${year}/regionals/${regional}/teams/${teamNum}/matches`, docId);
-              const snap = await getDoc(docRef);
+              const snap = await getDocFromServer(docRef);
               if (snap.exists()) {
                 dataMap[assignment.id] = snap.data();
               }
@@ -189,7 +189,7 @@ export default function Dashboard() {
             try {
               const docId = `qm${matchNum}_${alliance}_${user.uid}`;
               const docRef = doc(db, `years/${year}/regionals/${regional}/super_scouting`, docId);
-              const snap = await getDoc(docRef);
+              const snap = await getDocFromServer(docRef);
               if (snap.exists()) {
                 dataMap[assignment.id] = snap.data();
               }

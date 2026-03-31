@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, deleteDoc, doc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocFromServer, getDocsFromServer, query, updateDoc, where } from 'firebase/firestore';
 import { 
   Loader2, Calendar, CheckCircle, Clock, ArrowRightLeft, 
   Users, ArrowRight, X, ChevronDown, ChevronUp, Shield
@@ -69,25 +69,25 @@ export default function AssignmentsPage() {
     setIsLoading(true);
     try {
       // Get current event settings
-      const settingsDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+      const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
       const settings = settingsDoc.data() as any;
       const currentYear = String(settings?.year || '2026');
       const currentRegional = String(settings?.regional || 'practice');
       setYear(currentYear);
 
       // Load match teams data
-      const matchTeamsSnapshot = await getDocs(collection(db, `years/${currentYear}/regionals/${currentRegional}/match_teams`));
+      const matchTeamsSnapshot = await getDocsFromServer(collection(db, `years/${currentYear}/regionals/${currentRegional}/match_teams`));
       const matchTeamsMap: Record<string, MatchTeams> = {};
-      matchTeamsSnapshot.docs.forEach((doc) => {
-        const data = doc.data() as any;
+      matchTeamsSnapshot.docs.forEach((d) => {
+        const data = d.data() as any;
         const matchNum = String(data.matchNumber || '');
         if (matchNum) {
           if (!matchTeamsMap[matchNum]) {
             matchTeamsMap[matchNum] = { matchNumber: matchNum, red: [], blue: [] };
           }
-          if (data.alliance === 'red' || doc.id.includes('red')) {
+          if (data.alliance === 'red' || d.id.includes('red')) {
             matchTeamsMap[matchNum].red = data.teams || [];
-          } else if (data.alliance === 'blue' || doc.id.includes('blue')) {
+          } else if (data.alliance === 'blue' || d.id.includes('blue')) {
             matchTeamsMap[matchNum].blue = data.teams || [];
           }
         }
@@ -99,9 +99,9 @@ export default function AssignmentsPage() {
         collection(db, `years/${currentYear}/assignments`),
         where('userId', '==', user.uid)
       );
-      const assignmentsSnap = await getDocs(assignmentsQuery);
+      const assignmentsSnap = await getDocsFromServer(assignmentsQuery);
       const assignments: AssignmentWithTeam[] = assignmentsSnap.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() } as Assignment))
+        .map((d) => ({ id: d.id, ...d.data() } as Assignment))
         .map((assignment) => {
           const matchNum = String(assignment.matchNumber || '');
           const teams = matchTeamsMap[matchNum];
@@ -126,9 +126,9 @@ export default function AssignmentsPage() {
       setMyAssignments(assignments);
 
       // Load all approved users for transfer
-      const usersSnap = await getDocs(collection(db, 'users'));
+      const usersSnap = await getDocsFromServer(collection(db, 'users'));
       const users = usersSnap.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() } as User))
+        .map((d) => ({ id: d.id, ...d.data() } as User))
         .filter((u) => u.approved && u.id !== user.uid)
         .sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
       setAllUsers(users);

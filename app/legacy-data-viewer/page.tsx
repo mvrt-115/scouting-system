@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer } from 'firebase/firestore';
 import { Loader2 } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
@@ -36,7 +36,7 @@ export default function LegacyDataViewerPage() {
   useEffect(() => {
     const loadEvent = async () => {
       try {
-        const yearsSnapshot = await getDocs(collection(db, 'years'));
+        const yearsSnapshot = await getDocsFromServer(collection(db, 'years'));
         const legacyYears = sortYearsDesc(yearsSnapshot.docs.map((entry) => entry.id).filter(isLegacyYear));
         const latestLegacyYear = legacyYears[0] || '2025';
         setEventContext({

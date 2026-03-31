@@ -6,6 +6,7 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
 } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyCII1qqTPZyOqv4-mWGDIdnRVzZwV1IP-4",
@@ -37,6 +38,8 @@ const db = (() => {
     return getFirestore(app);
   }
 })();
+
+const storage = getStorage(app);
 const googleProvider = new GoogleAuthProvider();
 
-export { app, auth, db, googleProvider };
+export { app, auth, db, storage, googleProvider };

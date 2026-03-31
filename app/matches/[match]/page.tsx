@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, getDocsFromServer, doc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { useAuth } from '@/hooks/useAuth';
 import { Loader2, ArrowLeft, ShieldAlert, Database } from 'lucide-react';
 import Link from 'next/link';
@@ -34,7 +34,7 @@ export default function MatchDataView() {
 
       // If year/regional aren't in URL, try to get from settings
       if (!year || !regional) {
-        const settingsDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+        const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
         if (settingsDoc.exists()) {
           const data = settingsDoc.data();
           year = data.year;
@@ -69,7 +69,7 @@ export default function MatchDataView() {
 
       for (const teamId of allTeams) {
         const matchesRef = collection(db, `years/${year}/regionals/${regional}/teams/${teamId}/matches`);
-        const matchesSnapshot = await getDocs(matchesRef);
+        const matchesSnapshot = await getDocsFromServer(matchesRef);
         
         if (matchesSnapshot.empty) {
           averages[teamId] = null;

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { 
   Loader2, Plus, Save, Trash2, Search, Users, Calendar, Filter, X, ChevronDown, ChevronUp, 
   Shield, BarChart3, CheckCircle, Clock, UserCheck, Settings, ArrowRightLeft, ArrowRight 
@@ -111,7 +111,7 @@ export default function AdminPage() {
 
   const loadUsers = useCallback(async () => {
     setIsLoadingUsers(true);
-    const snapshot = await getDocs(collection(db, 'users'));
+    const snapshot = await getDocsFromServer(collection(db, 'users'));
     const nextUsers = snapshot.docs
       .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
       .sort((a: any, b: any) => Number(Boolean(a.approved)) - Number(Boolean(b.approved)) || String(a.email || '').localeCompare(String(b.email || '')));
@@ -120,7 +120,7 @@ export default function AdminPage() {
   }, []);
 
   const loadYears = useCallback(async () => {
-    const snapshot = await getDocs(collection(db, 'years'));
+    const snapshot = await getDocsFromServer(collection(db, 'years'));
     const nextYears = snapshot.docs.map((entry) => entry.id).sort((a, b) => b.localeCompare(a));
     const fallbackYears = nextYears.length > 0 ? nextYears : ['2026'];
     setYears(fallbackYears);
@@ -131,7 +131,7 @@ export default function AdminPage() {
 
   const loadRegionals = useCallback(async (selectedYear: string) => {
     await ensurePracticeRegional(selectedYear);
-    const snapshot = await getDocs(collection(db, `years/${selectedYear}/regionals`));
+    const snapshot = await getDocsFromServer(collection(db, `years/${selectedYear}/regionals`));
     const nextRegionals = snapshot.docs
       .map((entry) => ({ code: entry.id, name: String((entry.data() as any).name || entry.id) }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -139,7 +139,7 @@ export default function AdminPage() {
   }, [ensurePracticeRegional]);
 
   const loadAssignments = useCallback(async () => {
-    const snapshot = await getDocs(collection(db, `years/${year}/assignments`));
+    const snapshot = await getDocsFromServer(collection(db, `years/${year}/assignments`));
     const nextAssignments = snapshot.docs
       .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
       .filter((a: any) => a.regional === regional || a.year === year)
@@ -148,7 +148,7 @@ export default function AdminPage() {
   }, [year, regional]);
 
   const loadCurrentEvent = useCallback(async () => {
-    const settingsDoc = await getDoc(doc(db, 'settings', 'currentEvent'));
+    const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
     if (settingsDoc.exists()) {
       const data = settingsDoc.data();
       setYear(String(data.year || '2026'));
@@ -174,7 +174,7 @@ export default function AdminPage() {
 
   // Load transfer assignments
   const loadTransferAssignments = useCallback(async () => {
-    const snapshot = await getDocs(collection(db, `years/${year}/assignments`));
+    const snapshot = await getDocsFromServer(collection(db, `years/${year}/assignments`));
     const allAssignments = snapshot.docs
       .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
       .sort((a: any, b: any) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
@@ -253,8 +253,8 @@ export default function AdminPage() {
         userEmail: targetUser?.email || '',
         role: assignmentRole,
         matchNumber: String(matchNum),
-        position: assignmentRole === 'scout' ? assignPosition : undefined,
-        alliance: assignmentRole === 'super_scout' ? assignAlliance : undefined,
+        ...(assignmentRole === 'scout' ? { position: assignPosition } : {}),
+        ...(assignmentRole === 'super_scout' ? { alliance: assignAlliance } : {}),
         status: 'pending',
         regional,
         year,
@@ -313,10 +313,10 @@ export default function AdminPage() {
   const handleDeleteUser = async (entry: User) => {
     await deleteDoc(doc(db, 'users', entry.id));
     // Delete user's assignments
-    const yearsSnapshot = await getDocs(collection(db, 'years'));
+    const yearsSnapshot = await getDocsFromServer(collection(db, 'years'));
     await Promise.all(yearsSnapshot.docs.map(async (yearDoc) => {
       const yearId = yearDoc.id;
-      const assignmentsSnapshot = await getDocs(query(collection(db, `years/${yearId}/assignments`), where('userId', '==', entry.id)));
+      const assignmentsSnapshot = await getDocsFromServer(query(collection(db, `years/${yearId}/assignments`), where('userId', '==', entry.id)));
       await Promise.all(assignmentsSnapshot.docs.map((assignmentDoc) => deleteDoc(doc(db, `years/${yearId}/assignments`, assignmentDoc.id))));
     }));
     setUsers((current) => current.filter((userEntry) => userEntry.id !== entry.id));

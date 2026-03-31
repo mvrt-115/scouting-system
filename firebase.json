@@ -13,5 +13,16 @@
         "supportEmail": "reach.adit.sharma@gmail.com"
       }
     }
+  },
+  "hosting": {
+    "source": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "frameworksBackend": {
+      "region": "us-west1"
+    }
   }
 }
