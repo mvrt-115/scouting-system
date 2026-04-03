@@ -196,6 +196,26 @@ export default function Login() {
               </svg>
               Continue with Google
             </button>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200 dark:border-slate-700" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="bg-white px-3 text-slate-500 dark:bg-slate-900 dark:text-slate-400">No internet?</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                localStorage.setItem('offline-mode', 'true');
+                router.push('/assignments');
+              }}
+              type="button"
+              className="flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700 shadow-sm hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+            >
+              Use Offline Mode
+            </button>
           </div>
         </div>
       </div>

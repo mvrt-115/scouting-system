@@ -3,10 +3,10 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, deleteDoc, doc, getDocFromServer, getDocsFromServer, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocFromServer, getDocsFromServer, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { 
   Loader2, Calendar, CheckCircle, Clock, ArrowRightLeft, 
-  Users, ArrowRight, X, ChevronDown, ChevronUp, Shield
+  Users, ArrowRight, X, ChevronDown, ChevronUp, Shield, RefreshCw, Plus, Trash2
 } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
@@ -38,13 +38,26 @@ type MatchTeams = {
   blue?: string[];
 };
 
-type AssignmentWithTeam = Assignment & {
+type ManualAssignment = {
+  id: string;
+  matchNumber: string;
   teamNumber?: string;
+  alliance?: 'red' | 'blue';
+  position?: string;
+  role: 'scout' | 'super_scout';
+  status: 'pending' | 'completed';
+  isLocal: true;
+};
+
+type AssignmentWithTeam = (Assignment | ManualAssignment) & {
+  teamNumber?: string;
+  isLocal?: boolean;
 };
 
 export default function AssignmentsPage() {
   const router = useRouter();
-  const { user, isAuthChecking, isAdmin } = useAuth();
+  const { user, isAuthChecking, isAdmin, isOfflineMode } = useAuth();
+  const { isOnline } = useOfflineMode();
 
   const [isLoading, setIsLoading] = useState(true);
   const [myAssignments, setMyAssignments] = useState<AssignmentWithTeam[]>([]);
@@ -54,6 +67,18 @@ export default function AssignmentsPage() {
   const [selectedTransferUser, setSelectedTransferUser] = useState('');
   const [isTransferring, setIsTransferring] = useState(false);
   const [showTransferUI, setShowTransferUI] = useState(false);
+  const [manualAssignments, setManualAssignments] = useState<ManualAssignment[]>([]);
+  const [showAddManual, setShowAddManual] = useState(false);
+  const [newManualMatch, setNewManualMatch] = useState('');
+  const [newManualTeam, setNewManualTeam] = useState('');
+  const [newManualRole, setNewManualRole] = useState<'scout' | 'super_scout'>('scout');
+  const [newManualAlliance, setNewManualAlliance] = useState<'red' | 'blue'>('red');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+  const [quickMatchScout, setQuickMatchScout] = useState('');
+  const [quickTeamScout, setQuickTeamScout] = useState('');
+  const [quickMatchSuper, setQuickMatchSuper] = useState('');
+  const [quickAllianceSuper, setQuickAllianceSuper] = useState<'red' | 'blue'>('red');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [year, setYear] = useState('2026');
@@ -67,11 +92,27 @@ export default function AssignmentsPage() {
 
   useEffect(() => {
     if (!user) return;
+    
+    // Skip Firebase loading in offline mode - use local storage only
+    if (isOfflineMode) {
+      setIsLoading(false);
+      setMyAssignments([]);
+      return;
+    }
+    
     setIsLoading(true);
     
+    // Set a 5-second timeout to auto-enable offline mode if Firebase is slow
+    const timeoutId = setTimeout(() => {
+      console.log('Assignments loading timeout - switching to offline mode');
+      localStorage.setItem('offline-mode', 'true');
+      window.location.reload(); // Reload to trigger offline mode
+    }, 5000);
+
     // Get current event settings first
     const loadInitialData = async () => {
-      const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
+      try {
+        const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
       const settings = settingsDoc.data() as any;
       const currentYear = String(settings?.year || '2026');
       const currentRegional = String(settings?.regional || 'practice');
@@ -138,6 +179,7 @@ export default function AssignmentsPage() {
           .sort((a, b) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
         setMyAssignments(assignments);
         setIsLoading(false);
+        clearTimeout(timeoutId); // Clear timeout on success
       }).catch((error) => {
         console.error('Error fetching assignments from server:', error);
         setIsLoading(false);
@@ -174,11 +216,19 @@ export default function AssignmentsPage() {
         console.error('Error listening to assignments:', error);
       });
 
-      return () => unsubscribe();
-    };
+      return () => {
+        unsubscribe();
+        clearTimeout(timeoutId); // Clear timeout on unmount
+      };
+    } catch (err) {
+      clearTimeout(timeoutId); // Clear timeout on error
+      console.error('Error loading initial data:', err);
+      setIsLoading(false);
+    }
+  };
 
     loadInitialData();
-  }, [user]);
+  }, [user, isOfflineMode]);
 
   const handleTransferAssignments = async () => {
     if (!selectedTransferUser || selectedTransferAssignments.size === 0 || !user) return;
@@ -214,14 +264,146 @@ export default function AssignmentsPage() {
     }
   };
 
+  const MANUAL_ASSIGNMENTS_KEY = `manual-assignments-${user?.uid || 'guest'}`;
+
+  // Load manual assignments from localStorage
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const stored = localStorage.getItem(MANUAL_ASSIGNMENTS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setManualAssignments(Array.isArray(parsed) ? parsed : []);
+      }
+    } catch {
+      setManualAssignments([]);
+    }
+  }, [user, MANUAL_ASSIGNMENTS_KEY]);
+
+  // Save manual assignments to localStorage
+  useEffect(() => {
+    if (!user) return;
+    localStorage.setItem(MANUAL_ASSIGNMENTS_KEY, JSON.stringify(manualAssignments));
+  }, [manualAssignments, user, MANUAL_ASSIGNMENTS_KEY]);
+
+  const addManualAssignment = () => {
+    if (!newManualMatch.trim()) return;
+    
+    const newAssignment: ManualAssignment = {
+      id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      matchNumber: newManualMatch.trim(),
+      teamNumber: newManualTeam.trim() || undefined,
+      role: newManualRole,
+      alliance: newManualRole === 'super_scout' ? newManualAlliance : undefined,
+      status: 'pending',
+      isLocal: true,
+    };
+    
+    setManualAssignments(prev => [...prev, newAssignment]);
+    setNewManualMatch('');
+    setNewManualTeam('');
+    setShowAddManual(false);
+  };
+
+  const addQuickAssignment = (role: 'scout' | 'super_scout') => {
+    if (role === 'scout') {
+      if (!quickMatchScout.trim() || !quickTeamScout.trim()) return;
+      
+      const newAssignment: ManualAssignment = {
+        id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        matchNumber: quickMatchScout.trim(),
+        teamNumber: quickTeamScout.trim(),
+        role: 'scout',
+        status: 'pending',
+        isLocal: true,
+      };
+      
+      setManualAssignments(prev => [...prev, newAssignment]);
+      setQuickMatchScout('');
+      setQuickTeamScout('');
+    } else {
+      if (!quickMatchSuper.trim()) return;
+      
+      const newAssignment: ManualAssignment = {
+        id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        matchNumber: quickMatchSuper.trim(),
+        role: 'super_scout',
+        alliance: quickAllianceSuper,
+        status: 'pending',
+        isLocal: true,
+      };
+      
+      setManualAssignments(prev => [...prev, newAssignment]);
+      setQuickMatchSuper('');
+    }
+  };
+
+  const removeManualAssignment = (id: string) => {
+    setManualAssignments(prev => prev.filter(a => a.id !== id));
+  };
+
+  const handleSyncAssignments = async () => {
+    if (manualAssignments.length === 0 || !user) return;
+    setIsSyncing(true);
+    setSyncMessage('');
+    setError('');
+    
+    try {
+      // Sync manual assignments to server
+      const syncPromises = manualAssignments.map(async (assignment) => {
+        const assignmentData = {
+          userId: user.uid,
+          userName: user.displayName || user.email || '',
+          userEmail: user.email || '',
+          matchNumber: assignment.matchNumber,
+          teamNumber: assignment.teamNumber,
+          role: assignment.role,
+          alliance: assignment.alliance,
+          position: assignment.position,
+          status: 'pending',
+          regional,
+          year,
+          createdAt: new Date().toISOString(),
+          isManual: true,
+        };
+        
+        await setDoc(doc(db, `years/${year}/assignments`, assignment.id), assignmentData);
+      });
+      
+      await Promise.all(syncPromises);
+      
+      // Clear local assignments after successful sync
+      setManualAssignments([]);
+      setSyncMessage(`Successfully synced ${manualAssignments.length} assignment(s) to server`);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to sync assignments');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Combine server and manual assignments
+  const allAssignments = useMemo(() => {
+    // Filter out manual assignments that have matching server assignments
+    const unsyncedManual = manualAssignments.filter(manual => 
+      !myAssignments.some(server => 
+        server.matchNumber === manual.matchNumber && 
+        (manual.role === 'super_scout' 
+          ? server.alliance === manual.alliance 
+          : server.teamNumber === manual.teamNumber)
+      )
+    );
+    return [...myAssignments, ...unsyncedManual];
+  }, [myAssignments, manualAssignments]);
+
   // Group assignments by status
   const pendingAssignments = useMemo(
-    () => myAssignments.filter((a) => a.status === 'pending'),
-    [myAssignments]
+    () => allAssignments.filter((a) => a.status === 'pending'),
+    [allAssignments]
   );
   const completedAssignments = useMemo(
-    () => myAssignments.filter((a) => a.status === 'completed'),
-    [myAssignments]
+    () => allAssignments.filter((a) => a.status === 'completed'),
+    [allAssignments]
   );
 
   const pendingCount = pendingAssignments.length;
@@ -245,12 +427,38 @@ export default function AssignmentsPage() {
               <Calendar className="h-3 w-3" />
               My Assignments
             </div>
+            {isOfflineMode && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-amber-500/80 px-3 py-1 text-xs font-bold text-white backdrop-blur-sm">
+                OFFLINE MODE
+              </div>
+            )}
             <h1 className="mt-3 text-3xl font-black text-white">Your Schedule</h1>
             <p className="mt-2 max-w-2xl text-sm text-purple-100">
               View your scouting assignments and transfer them if needed.
             </p>
           </div>
           <div className="flex items-start gap-2">
+            {isOfflineMode && (
+              <button
+                onClick={() => {
+                  localStorage.removeItem('offline-mode');
+                  window.location.href = '/login';
+                }}
+                className="inline-flex items-center gap-2 rounded-lg bg-amber-500/80 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm transition-colors hover:bg-amber-500"
+              >
+                Exit Offline Mode
+              </button>
+            )}
+            {manualAssignments.length > 0 && !isOfflineMode && (
+              <button
+                onClick={handleSyncAssignments}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-500/80 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm transition-colors hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Sync ({manualAssignments.length})
+              </button>
+            )}
             {isAdmin && (
               <Link
                 href="/admin"
@@ -297,6 +505,102 @@ export default function AssignmentsPage() {
         </div>
       </div>
 
+      {/* Top Action Bar - Always visible */}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        {!showAddManual ? (
+          <button
+            onClick={() => setShowAddManual(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-700 hover:scale-105"
+          >
+            <Plus className="h-5 w-5" />
+            Add Manual Assignment
+          </button>
+        ) : (
+          <div className="w-full rounded-xl border border-purple-200 bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="flex items-center gap-2 mb-3">
+              <Plus className="h-5 w-5 text-emerald-600" />
+              <span className="font-bold text-purple-950 dark:text-white">Add Manual Assignment</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Match # *</label>
+                <input
+                  type="text"
+                  value={newManualMatch}
+                  onChange={(e) => setNewManualMatch(e.target.value)}
+                  placeholder="e.g., 1"
+                  className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Team # (opt)</label>
+                <input
+                  type="text"
+                  value={newManualTeam}
+                  onChange={(e) => setNewManualTeam(e.target.value)}
+                  placeholder="e.g., 254"
+                  className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Role</label>
+                <select
+                  value={newManualRole}
+                  onChange={(e) => setNewManualRole(e.target.value as 'scout' | 'super_scout')}
+                  className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                >
+                  <option value="scout">Scout</option>
+                  <option value="super_scout">Super Scout</option>
+                </select>
+              </div>
+              {newManualRole === 'super_scout' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Alliance</label>
+                  <select
+                    value={newManualAlliance}
+                    onChange={(e) => setNewManualAlliance(e.target.value as 'red' | 'blue')}
+                    className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                  >
+                    <option value="red">Red</option>
+                    <option value="blue">Blue</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={() => {
+                  setShowAddManual(false);
+                  setNewManualMatch('');
+                  setNewManualTeam('');
+                }}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-slate-200 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addManualAssignment}
+                disabled={!newManualMatch.trim()}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+              >
+                Add Assignment
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {manualAssignments.length > 0 && !showAddManual && (
+          <button
+            onClick={handleSyncAssignments}
+            disabled={isSyncing}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-700 hover:scale-105 disabled:opacity-50"
+          >
+            {isSyncing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
+            Sync {manualAssignments.length} Local
+          </button>
+        )}
+      </div>
+
       {/* Alerts */}
       {error ? (
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-200">
@@ -308,6 +612,92 @@ export default function AssignmentsPage() {
           {message}
         </div>
       ) : null}
+
+      {syncMessage ? (
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/50 dark:text-emerald-200">
+          {syncMessage}
+        </div>
+      ) : null}
+
+      {/* Quick Add Assignments - Full width, always visible at TOP */}
+      <div className="mt-6 rounded-xl border border-purple-200/70 bg-white/85 p-6 shadow-xl shadow-purple-900/5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80">
+        <div className="mb-4 flex items-center gap-3">
+          <Plus className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-xl font-black text-purple-950 dark:text-white">Quick Add Assignments</h2>
+          {manualAssignments.length > 0 && (
+            <span className="ml-auto rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+              {manualAssignments.length} local
+            </span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Scout Assignment Card */}
+          <div className="rounded-xl border border-purple-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-bold text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">
+                Scout
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <input
+                type="text"
+                value={quickMatchScout}
+                onChange={(e) => setQuickMatchScout(e.target.value)}
+                placeholder="Match #"
+                className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              />
+              <input
+                type="text"
+                value={quickTeamScout}
+                onChange={(e) => setQuickTeamScout(e.target.value)}
+                placeholder="Team #"
+                className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              />
+            </div>
+            <button
+              onClick={() => addQuickAssignment('scout')}
+              disabled={!quickMatchScout.trim() || !quickTeamScout.trim()}
+              className="w-full rounded-lg bg-purple-600 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
+            >
+              Add Match {quickMatchScout || 'X'} Team {quickTeamScout || 'X'}
+            </button>
+          </div>
+
+          {/* Super Scout Assignment Card */}
+          <div className="rounded-xl border border-indigo-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300">
+                Super Scout
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <input
+                type="text"
+                value={quickMatchSuper}
+                onChange={(e) => setQuickMatchSuper(e.target.value)}
+                placeholder="Match #"
+                className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-indigo-950 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              />
+              <select
+                value={quickAllianceSuper}
+                onChange={(e) => setQuickAllianceSuper(e.target.value as 'red' | 'blue')}
+                className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-indigo-950 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              >
+                <option value="red">Red Alliance</option>
+                <option value="blue">Blue Alliance</option>
+              </select>
+            </div>
+            <button
+              onClick={() => addQuickAssignment('super_scout')}
+              disabled={!quickMatchSuper.trim()}
+              className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Add Match {quickMatchSuper || 'X'} {quickAllianceSuper === 'red' ? 'Red' : 'Blue'} Alliance
+            </button>
+          </div>
+        </div>
+      </div>
 
       {isLoading ? (
         <div className="mt-6 flex items-center justify-center py-12">
@@ -327,9 +717,17 @@ export default function AssignmentsPage() {
                 </span>
               </div>
 
-              {pendingAssignments.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-purple-200 bg-purple-50/50 px-4 py-8 text-center text-sm text-slate-500 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-slate-400">
-                  No pending assignments
+              {pendingAssignments.length === 0 && !showAddManual ? (
+                <div className="rounded-lg border border-dashed border-purple-200 bg-purple-50/50 px-4 py-6 text-center dark:border-zinc-700 dark:bg-zinc-950/40">
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">No pending assignments</p>
+                  
+                  <button
+                    onClick={() => setShowAddManual(true)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-purple-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Manual Assignment
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -348,8 +746,92 @@ export default function AssignmentsPage() {
                         }
                         setSelectedTransferAssignments(newSet);
                       }}
+                      onDelete={assignment.isLocal ? () => removeManualAssignment(assignment.id) : undefined}
                     />
                   ))}
+                  
+                  {/* Always show Add Manual button at bottom of list */}
+                  {!showAddManual ? (
+                    <button
+                      onClick={() => setShowAddManual(true)}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-dashed border-purple-300 bg-purple-50/30 px-4 py-3 text-sm font-bold text-purple-700 transition-colors hover:bg-purple-50 hover:border-purple-400 dark:border-purple-700 dark:bg-purple-900/10 dark:text-purple-300 dark:hover:bg-purple-900/20"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add Manual Assignment
+                    </button>
+                  ) : (
+                    <div className="rounded-lg border border-purple-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Match #</label>
+                          <input
+                            type="text"
+                            value={newManualMatch}
+                            onChange={(e) => setNewManualMatch(e.target.value)}
+                            placeholder="e.g., 1"
+                            className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Team # (optional)</label>
+                          <input
+                            type="text"
+                            value={newManualTeam}
+                            onChange={(e) => setNewManualTeam(e.target.value)}
+                            placeholder="e.g., 254"
+                            className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Role</label>
+                          <select
+                            value={newManualRole}
+                            onChange={(e) => setNewManualRole(e.target.value as 'scout' | 'super_scout')}
+                            className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                          >
+                            <option value="scout">Scout</option>
+                            <option value="super_scout">Super Scout</option>
+                          </select>
+                        </div>
+                        {newManualRole === 'super_scout' && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Alliance</label>
+                            <select
+                              value={newManualAlliance}
+                              onChange={(e) => setNewManualAlliance(e.target.value as 'red' | 'blue')}
+                              className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                            >
+                              <option value="red">Red</option>
+                              <option value="blue">Blue</option>
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={() => {
+                            setShowAddManual(false);
+                            setNewManualMatch('');
+                            setNewManualTeam('');
+                          }}
+                          className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-slate-200 dark:hover:bg-zinc-800"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={addManualAssignment}
+                          disabled={!newManualMatch.trim()}
+                          className="flex-1 rounded-lg bg-purple-600 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -378,96 +860,6 @@ export default function AssignmentsPage() {
             </div>
           </div>
 
-          {/* Transfer Section - Right Column */}
-          <div className="flex flex-col gap-6">
-            <div className="flex-1 rounded-xl border border-purple-200/70 bg-white/85 p-6 shadow-xl shadow-purple-900/5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80">
-              <div className="mb-4 flex items-center gap-3">
-                <ArrowRightLeft className="h-5 w-5 text-purple-600" />
-                <h2 className="text-xl font-black text-purple-950 dark:text-white">Transfer Assignments</h2>
-              </div>
-
-              <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">
-                Need to step away? Transfer your pending assignments to another scout.
-              </p>
-
-              {pendingCount === 0 ? (
-                <div className="rounded-lg border border-dashed border-purple-200 bg-purple-50/50 px-4 py-6 text-center text-sm text-slate-500 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-slate-400">
-                  No assignments to transfer
-                </div>
-              ) : !showTransferUI ? (
-                <button
-                  type="button"
-                  onClick={() => setShowTransferUI(true)}
-                  disabled={selectedTransferAssignments.size === 0}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
-                >
-                  <ArrowRightLeft className="h-4 w-4" />
-                  Transfer Selected ({selectedTransferAssignments.size})
-                </button>
-              ) : (
-                <div className="space-y-3">
-                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
-                    <span className="mb-1.5 block">Transfer To</span>
-                    <select
-                      value={selectedTransferUser}
-                      onChange={(e) => setSelectedTransferUser(e.target.value)}
-                      className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
-                    >
-                      <option value="">Select a scout...</option>
-                      {allUsers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name || u.email || u.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowTransferUI(false);
-                        setSelectedTransferUser('');
-                      }}
-                      className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-slate-200 dark:hover:bg-zinc-800"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleTransferAssignments}
-                      disabled={!selectedTransferUser || isTransferring}
-                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-purple-700 disabled:opacity-60"
-                    >
-                      {isTransferring ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                      Transfer
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Actions */}
-            <div className="rounded-xl border border-purple-200/70 bg-white/85 p-6 shadow-xl shadow-purple-900/5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80">
-              <h3 className="mb-4 text-sm font-bold text-slate-700 dark:text-slate-200">Quick Actions</h3>
-              <div className="space-y-2">
-                <Link
-                  href="/scout"
-                  className="flex items-center justify-between rounded-lg border border-purple-200 bg-purple-50 p-3 text-sm font-semibold text-purple-800 transition-colors hover:bg-purple-100 dark:border-purple-700 dark:bg-purple-900/20 dark:text-purple-200 dark:hover:bg-purple-900/30"
-                >
-                  <span>Start Scouting</span>
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-                <Link
-                  href="/dashboard"
-                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-slate-200 dark:hover:bg-zinc-800"
-                >
-                  <span>Go to Dashboard</span>
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </div>
-            </div>
-          </div>
         </div>
       )}
     </div>
@@ -479,11 +871,13 @@ function AssignmentCard({
   selectable,
   selected,
   onToggle,
+  onDelete,
 }: {
   assignment: AssignmentWithTeam;
   selectable?: boolean;
   selected?: boolean;
   onToggle?: () => void;
+  onDelete?: () => void;
 }) {
   const isScout = assignment.role === 'scout';
   const isRed = assignment.alliance === 'red' || assignment.position?.startsWith('red');
@@ -529,6 +923,11 @@ function AssignmentCard({
           >
             {assignment.status}
           </span>
+          {assignment.isLocal && (
+            <span className="rounded px-2 py-0.5 text-xs font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+              Local
+            </span>
+          )}
         </div>
         <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
           {assignment.teamNumber ? `Team ${assignment.teamNumber}` : 'Team TBD'}
@@ -542,6 +941,17 @@ function AssignmentCard({
           )}
         </div>
       </div>
+      {onDelete && assignment.isLocal && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="ml-2 p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }

@@ -1,12 +1,22 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, AlertCircle, Clock, ClipboardList, Edit3, Eye } from 'lucide-react';
+import { Loader2, AlertCircle, Clock, ClipboardList, Edit3, Eye, Plus, RefreshCw } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, getDocsFromServer, query, where, doc, getDoc, getDocFromServer, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, getDocsFromServer, query, where, doc, getDoc, getDocFromServer, setDoc, onSnapshot, addDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
+
+type ManualAssignment = {
+  id: string;
+  matchNumber: string;
+  teamNumber?: string;
+  role: 'scout' | 'super_scout';
+  alliance?: 'red' | 'blue';
+  status: 'pending' | 'completed';
+  isLocal: boolean;
+};
 
 export default function Dashboard() {
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -15,9 +25,97 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [currentYear, setCurrentYear] = useState('2026');
   const [currentRegional, setCurrentRegional] = useState('casnv');
+  const [manualAssignments, setManualAssignments] = useState<ManualAssignment[]>([]);
+  const [quickMatchScout, setQuickMatchScout] = useState('');
+  const [quickTeamScout, setQuickTeamScout] = useState('');
+  const [quickMatchSuper, setQuickMatchSuper] = useState('');
+  const [quickAllianceSuper, setQuickAllianceSuper] = useState<'red' | 'blue'>('red');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
   
-  const { user, isAuthChecking, isApproved, role } = useAuth();
+  const { user, isAuthChecking, isApproved, role, isOfflineMode } = useAuth();
   const router = useRouter();
+
+  // Load manual assignments from localStorage
+  useEffect(() => {
+    if (!user) return;
+    const key = `manual-assignments-${user.uid || 'guest'}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      try {
+        setManualAssignments(JSON.parse(stored));
+      } catch {
+        setManualAssignments([]);
+      }
+    }
+  }, [user]);
+
+  // Save manual assignments to localStorage
+  useEffect(() => {
+    if (!user) return;
+    const key = `manual-assignments-${user.uid || 'guest'}`;
+    localStorage.setItem(key, JSON.stringify(manualAssignments));
+  }, [manualAssignments, user]);
+
+  const addQuickAssignment = (roleType: 'scout' | 'super_scout') => {
+    if (roleType === 'scout') {
+      if (!quickMatchScout.trim() || !quickTeamScout.trim()) return;
+      const newAssignment: ManualAssignment = {
+        id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        matchNumber: quickMatchScout.trim(),
+        teamNumber: quickTeamScout.trim(),
+        role: 'scout',
+        status: 'pending',
+        isLocal: true,
+      };
+      setManualAssignments(prev => [...prev, newAssignment]);
+      setQuickMatchScout('');
+      setQuickTeamScout('');
+    } else {
+      if (!quickMatchSuper.trim()) return;
+      const newAssignment: ManualAssignment = {
+        id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        matchNumber: quickMatchSuper.trim(),
+        role: 'super_scout',
+        alliance: quickAllianceSuper,
+        status: 'pending',
+        isLocal: true,
+      };
+      setManualAssignments(prev => [...prev, newAssignment]);
+      setQuickMatchSuper('');
+    }
+  };
+
+  const handleSyncAssignments = async () => {
+    if (manualAssignments.length === 0 || !user) return;
+    setIsSyncing(true);
+    setSyncMessage('');
+    
+    try {
+      const assignmentsRef = collection(db, `years/${currentYear}/assignments`);
+      for (const assignment of manualAssignments) {
+        await addDoc(assignmentsRef, {
+          userId: user.uid,
+          matchNumber: assignment.matchNumber,
+          teamNumber: assignment.teamNumber,
+          role: assignment.role,
+          alliance: assignment.alliance,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          year: currentYear,
+          regional: currentRegional,
+        });
+      }
+      setManualAssignments([]);
+      setSyncMessage(`Synced ${manualAssignments.length} assignments successfully!`);
+      setTimeout(() => setSyncMessage(''), 3000);
+    } catch (err) {
+      console.error('Error syncing assignments:', err);
+      setSyncMessage('Failed to sync. Please try again.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -276,6 +374,102 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
           <p className="text-gray-600 dark:text-zinc-400 mt-1">Welcome back, {roleDisplay}.</p>
         </div>
+        {manualAssignments.length > 0 && !isOfflineMode && (
+          <button
+            onClick={handleSyncAssignments}
+            disabled={isSyncing}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-700 hover:scale-105 disabled:opacity-50"
+          >
+            {isSyncing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
+            Sync {manualAssignments.length} Local
+          </button>
+        )}
+      </div>
+
+      {/* Quick Add Assignments */}
+      <div className="mb-8 rounded-xl border border-purple-200/70 bg-white/85 p-6 shadow-xl shadow-purple-900/5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80">
+        <div className="mb-4 flex items-center gap-3">
+          <Plus className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-xl font-black text-purple-950 dark:text-white">Quick Add Assignments</h2>
+          {manualAssignments.length > 0 && (
+            <span className="ml-auto rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+              {manualAssignments.length} local
+            </span>
+          )}
+        </div>
+
+        {syncMessage && (
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/50 dark:text-emerald-200">
+            {syncMessage}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Scout Assignment Card */}
+          <div className="rounded-xl border border-purple-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-bold text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">
+                Scout
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <input
+                type="text"
+                value={quickMatchScout}
+                onChange={(e) => setQuickMatchScout(e.target.value)}
+                placeholder="Match #"
+                className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              />
+              <input
+                type="text"
+                value={quickTeamScout}
+                onChange={(e) => setQuickTeamScout(e.target.value)}
+                placeholder="Team #"
+                className="w-full rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              />
+            </div>
+            <button
+              onClick={() => addQuickAssignment('scout')}
+              disabled={!quickMatchScout.trim() || !quickTeamScout.trim()}
+              className="w-full rounded-lg bg-purple-600 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
+            >
+              Add Match {quickMatchScout || 'X'} Team {quickTeamScout || 'X'}
+            </button>
+          </div>
+
+          {/* Super Scout Assignment Card */}
+          <div className="rounded-xl border border-indigo-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300">
+                Super Scout
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <input
+                type="text"
+                value={quickMatchSuper}
+                onChange={(e) => setQuickMatchSuper(e.target.value)}
+                placeholder="Match #"
+                className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-indigo-950 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              />
+              <select
+                value={quickAllianceSuper}
+                onChange={(e) => setQuickAllianceSuper(e.target.value as 'red' | 'blue')}
+                className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-indigo-950 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+              >
+                <option value="red">Red Alliance</option>
+                <option value="blue">Blue Alliance</option>
+              </select>
+            </div>
+            <button
+              onClick={() => addQuickAssignment('super_scout')}
+              disabled={!quickMatchSuper.trim()}
+              className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Add Match {quickMatchSuper || 'X'} {quickAllianceSuper === 'red' ? 'Red' : 'Blue'} Alliance
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-8">
@@ -298,7 +492,7 @@ export default function Dashboard() {
                 <p className="text-red-600 text-sm">{error}</p>
               </div>
             </div>
-          ) : assignments.length === 0 ? (
+          ) : assignments.length === 0 && manualAssignments.length === 0 ? (
             <div className="bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg p-8 text-center">
               <ClipboardList className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 dark:text-zinc-100">No Assignments</h3>
@@ -306,6 +500,56 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Manual Assignments - Show First */}
+              {manualAssignments.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-bold text-emerald-700 dark:text-emerald-400 mb-3 flex items-center gap-2">
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs dark:bg-emerald-900/40">LOCAL</span>
+                    Manual Assignments ({manualAssignments.length})
+                  </h3>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {manualAssignments.map((assignment) => (
+                      <div key={assignment.id} className="bg-white dark:bg-zinc-900 border-2 border-emerald-200 dark:border-emerald-800 rounded-lg p-5 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            {assignment.role === 'super_scout' ? (
+                              <h3 className={`text-2xl font-bold capitalize ${assignment.alliance === 'red' ? 'text-red-600' : 'text-blue-600'}`}>
+                                {assignment.alliance} Alliance
+                              </h3>
+                            ) : (
+                              <h3 className="text-2xl font-bold text-purple-900 dark:text-purple-300">Team {assignment.teamNumber}</h3>
+                            )}
+                            <p className="text-sm font-medium text-gray-500 dark:text-zinc-400">Match {assignment.matchNumber}</p>
+                          </div>
+                          <span className="text-xs px-2 py-1 rounded-full font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                            Local
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600 dark:text-zinc-300 mb-4">
+                          {assignment.role === 'super_scout' ? 'Super Scout' : 'Scout'}
+                        </p>
+                        {assignment.role === 'super_scout' ? (
+                          <Link 
+                            href={`/matches/${assignment.matchNumber}/${assignment.alliance}/super-scout`}
+                            className="block text-center w-full py-2 rounded-md text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+                          >
+                            Start Super Scouting
+                          </Link>
+                        ) : (
+                          <Link
+                            href={`/scout?year=${currentYear}&regional=${currentRegional}&match=${encodeURIComponent(String(assignment.matchNumber))}&team=${encodeURIComponent(String(assignment.teamNumber || ''))}`}
+                            className="block text-center w-full py-2 rounded-md text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+                          >
+                            Start Scouting
+                          </Link>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Regular Assignments */}
               {assignmentShifts.map((shift) => (
                 <div key={shift.id}>
                   <h3 className="text-lg font-bold text-gray-800 dark:text-zinc-200 mb-3">{shift.label}</h3>

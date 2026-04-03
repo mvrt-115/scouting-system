@@ -10,11 +10,65 @@ export function useAuth() {
   const [isApproved, setIsApproved] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [role, setRole] = useState<string>('pending');
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   useEffect(() => {
+    // Check if offline mode is enabled
+    const offlineModeEnabled = localStorage.getItem('offline-mode') === 'true';
+    setIsOfflineMode(offlineModeEnabled);
+
+    if (offlineModeEnabled) {
+      // In offline mode, create a mock user
+      const mockUser = {
+        uid: 'offline-user',
+        email: 'offline@local',
+        displayName: 'Offline User',
+      } as User;
+      
+      setUser(mockUser);
+      setUserData({
+        name: 'Offline User',
+        photoURL: '',
+        approved: true,
+        role: 'scout',
+      });
+      setIsApproved(true);
+      setIsAdmin(false);
+      setRole('scout');
+      setIsAuthChecking(false);
+      return;
+    }
+
+    // Set a 5-second timeout to auto-enable offline mode if auth takes too long
+    const timeoutId = setTimeout(() => {
+      console.log('Auth timeout - enabling offline mode');
+      localStorage.setItem('offline-mode', 'true');
+      setIsOfflineMode(true);
+      const mockUser = {
+        uid: 'offline-user',
+        email: 'offline@local',
+        displayName: 'Offline User',
+      } as User;
+      
+      setUser(mockUser);
+      setUserData({
+        name: 'Offline User',
+        photoURL: '',
+        approved: true,
+        role: 'scout',
+      });
+      setIsApproved(true);
+      setIsAdmin(false);
+      setRole('scout');
+      setIsAuthChecking(false);
+    }, 5000);
+
     let unsubscribeUserDoc: (() => void) | undefined;
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      // Clear timeout if auth resolves in time
+      clearTimeout(timeoutId);
+      
       setUser(currentUser);
       unsubscribeUserDoc?.();
       unsubscribeUserDoc = undefined;
@@ -80,5 +134,5 @@ export function useAuth() {
     };
   }, []);
 
-  return { user, userData, isAuthChecking, isApproved, isAdmin, role };
+  return { user, userData, isAuthChecking, isApproved, isAdmin, role, isOfflineMode };
 }
