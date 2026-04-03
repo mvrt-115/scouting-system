@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
+import { useOfflineMode } from '@/hooks/useOfflineMode';
 
 type User = {
   id: string;
