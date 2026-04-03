@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, AlertCircle, Clock, ClipboardList, Edit3, Eye, Plus, RefreshCw } from 'lucide-react';
+import { Loader2, AlertCircle, Clock, ClipboardList, Edit3, Eye, Plus, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, getDocsFromServer, query, where, doc, getDoc, getDocFromServer, setDoc, onSnapshot, addDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
@@ -374,16 +374,39 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
           <p className="text-gray-600 dark:text-zinc-400 mt-1">Welcome back, {roleDisplay}.</p>
         </div>
-        {manualAssignments.length > 0 && !isOfflineMode && (
+        <div className="flex items-center gap-3">
+          {/* Offline/Online Toggle */}
           <button
-            onClick={handleSyncAssignments}
-            disabled={isSyncing}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-700 hover:scale-105 disabled:opacity-50"
+            onClick={() => {
+              if (isOfflineMode) {
+                localStorage.removeItem('offline-mode');
+                window.location.reload();
+              } else {
+                localStorage.setItem('offline-mode', 'true');
+                window.location.reload();
+              }
+            }}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all ${
+              isOfflineMode 
+                ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300' 
+                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300'
+            }`}
           >
-            {isSyncing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
-            Sync {manualAssignments.length} Local
+            {isOfflineMode ? <WifiOff className="h-4 w-4" /> : <Wifi className="h-4 w-4" />}
+            {isOfflineMode ? 'Offline Mode' : 'Online Mode'}
           </button>
-        )}
+          
+          {manualAssignments.length > 0 && (
+            <button
+              onClick={handleSyncAssignments}
+              disabled={isSyncing || isOfflineMode}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-700 hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
+            >
+              {isSyncing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
+              Sync {manualAssignments.length} Local
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Quick Add Assignments */}
