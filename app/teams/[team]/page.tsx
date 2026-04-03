@@ -1,9 +1,10 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { addDoc, collection, getDocs, getDocsFromServer, query, where } from 'firebase/firestore';
+import { Loader2, ArrowLeft, MessageSquare, Star, ChevronDown, ChevronUp, Ban, Plus, X, Sparkles, Send, HelpCircle } from 'lucide-react';
 import { auth, db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { useMatchDataCache } from '@/hooks/useMatchDataCache';
@@ -26,6 +27,8 @@ export default function TeamPage({ params }: { params: Promise<{ team: string }>
   const [teamMatches, setTeamMatches] = useState<any[]>([]);
   const [baMatchesLocal, setBaMatchesLocal] = useState<any[]>([]);
   const [dataSource, setDataSource] = useState<'cache' | 'firebase' | null>(null);
+  const [dnpList, setDnpList] = useState<string[]>([]);
+  const [generalNotes, setGeneralNotes] = useState('');
 
   const { rows: cachedRows, baMatches, eventContext, isLoading: cacheLoading } = useMatchDataCache(
     Boolean(userData?.approved),
@@ -66,7 +69,7 @@ export default function TeamPage({ params }: { params: Promise<{ team: string }>
       const matchesSnap = await getDocsFromServer(matchesRef);
       const matchesData = matchesSnap.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data() as any
       })).sort((a, b) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
       
       setTeamMatches(matchesData);
@@ -112,7 +115,7 @@ export default function TeamPage({ params }: { params: Promise<{ team: string }>
       console.log('Pit scout docs count:', pitSnap.docs.length);
       console.log('Pit scout docs:', pitSnap.docs.map(d => ({ id: d.id, data: d.data() })));
       const teamPitData = pitSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .map(doc => ({ id: doc.id, ...doc.data() as any }))
         .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
       console.log('Processed pit scout data:', teamPitData);
       setPitScoutData(teamPitData);
@@ -192,7 +195,6 @@ function TeamPage2026({ teamNumber, year, regional, matches, baMatches, comments
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <Stat label="Avg HP Auto" value={summary.averageHpAuto.toFixed(1)} />
-            <Stat label="Reliability" value={summary.reliability.toFixed(1)} />
             <Stat label="Starts Marked" value={String(summary.startPoints.length)} />
             <Stat label="Shots Marked" value={String(summary.shotPoints.length)} />
           </div>
@@ -363,59 +365,320 @@ function normalizeShotPoints(match: any) { const positions = Array.isArray(match
 function getMatchScoreForTeam(match: any, teamNumber: string) { const redTeams = normalizeTeams(match?.alliances?.red?.teams || match?.red?.teams || match?.redTeams); const blueTeams = normalizeTeams(match?.alliances?.blue?.teams || match?.blue?.teams || match?.blueTeams); if (redTeams.includes(teamNumber)) return Number(match?.alliances?.red?.score ?? match?.red?.score ?? match?.redScore ?? 0); if (blueTeams.includes(teamNumber)) return Number(match?.alliances?.blue?.score ?? match?.blue?.score ?? match?.blueScore ?? 0); return null; }
 function normalizeTeams(value: any): string[] { if (!Array.isArray(value)) return []; return value.map((entry) => String(entry || '').replace('frc', '')).filter(Boolean); }
 function VisualStars({ value }: { value: number }) { const normalizedValue = Math.max(0, Math.min(10, Math.round(value))); return <div className="mt-2 flex items-center gap-2"><div className="flex flex-wrap gap-0.5 text-purple-500 dark:text-purple-300">{Array.from({ length: 10 }, (_, index) => index + 1).map((index) => <Star key={index} className={`h-3 w-3 ${index <= normalizedValue ? 'fill-current' : ''}`} />)}</div><span className="text-sm font-bold text-purple-900 dark:text-purple-200">{normalizedValue}/10</span></div>; }
+
+function StarRatingHint() {
+  const [showHint, setShowHint] = useState(false);
+  const [activeTab, setActiveTab] = useState<'general' | 'auto' | 'driver' | 'scoring' | 'defense' | 'reliability' | 'speed' | 'capabilities' | 'playstyle'>('general');
+  
+  const ratingDescriptions = [
+    { range: '9-10', label: 'Elite', desc: 'Top-tier performance, championship caliber' },
+    { range: '7-8', label: 'Strong', desc: 'Very good, reliable contributor' },
+    { range: '5-6', label: 'Average', desc: 'Decent performance, meets expectations' },
+    { range: '3-4', label: 'Weak', desc: 'Below average, inconsistent' },
+    { range: '1-2', label: 'Poor', desc: 'Significant issues, needs improvement' },
+    { range: '0', label: 'N/A', desc: 'No data or not applicable' },
+  ];
+  
+  const fieldSpecificGuidance: Record<string, { title: string; guidance: Array<{score: string; desc: string}> }> = {
+    auto: {
+      title: 'Auto Scoring (20s Autonomous)',
+      guidance: [
+        { score: '9-10', desc: '4-5+ fuel scored consistently, precise hub alignment, never misses' },
+        { score: '7-8', desc: '3-4 fuel reliably, good accuracy, minimal errors' },
+        { score: '5-6', desc: '2-3 fuel average, occasional misses' },
+        { score: '3-4', desc: '1-2 fuel, inconsistent, frequent misplacements' },
+        { score: '1-2', desc: '0-1 fuel, major auto failures or no auto routine' },
+      ]
+    },
+    driver: {
+      title: 'Driver Skill (Bumps, Trenches, Hub Control)',
+      guidance: [
+        { score: '9-10', desc: 'Elite control over bumps/under trenches, precise hub alignment, fast cycles, never bumps into field elements or other robots' },
+        { score: '7-8', desc: 'Good control, efficient navigation, rare alignment errors, minimal bumping' },
+        { score: '5-6', desc: 'Average driving, some bump/trench issues, okay hub alignment, occasional collisions' },
+        { score: '3-4', desc: 'Poor control, struggles with obstacles, slow cycles, frequently bumps into things' },
+        { score: '1-2', desc: 'Unsafe driving, constant collisions, gets stuck on field elements, hurts alliance' },
+      ]
+    },
+    scoring: {
+      title: 'Fuel Scoring Volume & Accuracy (like 254)',
+      guidance: [
+        { score: '9-10', desc: 'Elite scorer like 254 - rapid fuel intake, pinpoint hub accuracy, high volume (15+ fuel per active period)' },
+        { score: '7-8', desc: 'Solid scorer, good accuracy into hub, consistent 10-14 fuel per period' },
+        { score: '5-6', desc: 'Moderate scorer, decent accuracy, 6-9 fuel per period' },
+        { score: '3-4', desc: 'Low scorer, poor hub accuracy, frequent misses, 3-5 fuel per period' },
+        { score: '1-2', desc: 'Minimal scoring (0-2 fuel), constant misses into hub, ineffective scoring attempts' },
+      ]
+    },
+    defense: {
+      title: 'Defense Rating (Positioning & Effectiveness)',
+      guidance: [
+        { score: '9-10', desc: 'Elite defender - holds position on their side, blocks fuel scoring, disrupts opponent cycles, smart positioning during shifts' },
+        { score: '7-8', desc: 'Good defender - stays on their side, solid blocks, interferes with opponent hub access' },
+        { score: '5-6', desc: 'Average defense - occasionally crosses to opponent side but effective when positioned correctly' },
+        { score: '3-4', desc: 'Weak defense - just follows opponents around, poor positioning, ineffective blocks' },
+        { score: '1-2', desc: 'No defense or harmful - chases opponents everywhere, leaves their side open, gets in alliance way' },
+      ]
+    },
+    reliability: {
+      title: 'Robot Reliability / Uptime',
+      guidance: [
+        { score: '9-10', desc: 'Never breaks, 100% field time, all mechanisms functional' },
+        { score: '7-8', desc: 'Very reliable, rare minor issues, quick recovery' },
+        { score: '5-6', desc: 'Mostly reliable, occasional mechanism stoppage' },
+        { score: '3-4', desc: 'Frequent issues, dead on field multiple times per match' },
+        { score: '1-2', desc: 'Constant breakdowns, barely moves or non-functional' },
+      ]
+    },
+    speed: {
+      title: 'Cycle Speed (Fuel Collection to Scoring)',
+      guidance: [
+        { score: '9-10', desc: 'Extremely fast cycles - depot/neutral zone to hub efficiently, fastest on field' },
+        { score: '7-8', desc: 'Fast cycles, above average speed between collection and scoring' },
+        { score: '5-6', desc: 'Average speed, standard cycle times between fuel intake and hub scoring' },
+        { score: '3-4', desc: 'Slow cycles, sluggish movement between scoring and collecting' },
+        { score: '1-2', desc: 'Very slow, significantly impacts match scoring potential' },
+      ]
+    },
+    capabilities: {
+      title: 'Capabilities (Climb, Trenches, Bumps, Fuel Handling)',
+      guidance: [
+        { score: '9-10', desc: 'High RUNG climb consistently, navigates trenches/bumps easily, handles fuel flawlessly' },
+        { score: '7-8', desc: 'MID RUNG climb, handles most field elements well, good fuel control' },
+        { score: '5-6', desc: 'LOW RUNG climb, occasional trench/bump issues, decent fuel handling' },
+        { score: '3-4', desc: 'Parking only (no climb), struggles with obstacles, fuel handling issues' },
+        { score: '1-2', desc: 'No climb, cannot navigate bumps/trenches, drops fuel constantly' },
+      ]
+    },
+    playstyle: {
+      title: 'Play Style / Role Execution',
+      guidance: [
+        { score: '9-10', desc: 'Clear role execution - offensive scorer, defensive specialist, or support/Human Player coordinator' },
+        { score: '7-8', desc: 'Good role awareness, executes strategy well most of the match' },
+        { score: '5-6', desc: 'Has a role but inconsistent execution, sometimes unsure when to score/defend' },
+        { score: '3-4', desc: 'Unclear role, ineffective at both offense and defense' },
+        { score: '1-2', desc: 'No clear role, ignores alliance strategy, hurts alliance performance' },
+      ]
+    },
+  };
+  
+  const tabs = [
+    { id: 'general', label: 'General' },
+    { id: 'auto', label: 'Auto' },
+    { id: 'driver', label: 'Driver' },
+    { id: 'scoring', label: 'Scoring' },
+    { id: 'defense', label: 'Defense' },
+    { id: 'reliability', label: 'Reliability' },
+    { id: 'speed', label: 'Speed' },
+    { id: 'capabilities', label: 'Capabilities' },
+    { id: 'playstyle', label: 'Playstyle' },
+  ] as const;
+  
+  const activeGuidance = fieldSpecificGuidance[activeTab];
+  
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setShowHint(!showHint)}
+        className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300 transition-colors"
+      >
+        <HelpCircle className="h-4 w-4" />
+        <span>Rating Guide</span>
+      </button>
+      
+      {showHint && (
+        <div className="absolute right-0 z-50 mt-2 w-80 rounded-xl border border-purple-200 bg-white p-3 shadow-xl dark:border-purple-800 dark:bg-zinc-900">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-bold text-purple-900 dark:text-purple-200">Star Rating Guide</span>
+            <button onClick={() => setShowHint(false)} className="text-purple-400 hover:text-purple-600">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          
+          {/* Tabs */}
+          <div className="flex flex-wrap gap-1 mb-3 border-b border-purple-100 dark:border-purple-800 pb-2">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`px-2 py-1 text-[10px] font-semibold rounded transition-colors ${
+                  activeTab === tab.id
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          
+          {/* Content */}
+          <div className="space-y-2">
+            {activeTab === 'general' ? (
+              <div className="space-y-1.5">
+                {ratingDescriptions.map((item) => (
+                  <div key={item.range} className="flex items-start gap-2 text-xs">
+                    <span className="w-12 font-bold text-purple-700 dark:text-purple-300 shrink-0">{item.range}</span>
+                    <span className="w-14 font-semibold text-purple-600 dark:text-purple-400 shrink-0">{item.label}</span>
+                    <span className="text-slate-600 dark:text-slate-400">{item.desc}</span>
+                  </div>
+                ))}
+              </div>
+            ) : activeGuidance ? (
+              <div>
+                <div className="text-xs font-semibold text-purple-700 dark:text-purple-300 mb-2">
+                  {activeGuidance.title}
+                </div>
+                <div className="space-y-1.5">
+                  {activeGuidance.guidance.map((item) => (
+                    <div key={item.score} className="flex items-start gap-2 text-xs">
+                      <span className="w-12 font-bold text-purple-700 dark:text-purple-300 shrink-0">{item.score}</span>
+                      <span className="text-slate-600 dark:text-slate-400">{item.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+          
+          <div className="mt-3 text-[10px] text-slate-500 dark:text-slate-400 italic border-t border-purple-100 dark:border-purple-800 pt-2">
+            Ratings are based on scout observations during matches. All ratings are 0-10 scale.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 function Stat({ label, value }: { label: string; value: unknown }) { return <div className="rounded-lg border border-purple-100 bg-purple-50/70 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950/60"><div className="text-[11px] font-bold uppercase tracking-[0.16em] text-purple-700 dark:text-purple-300">{label}</div><div className="mt-1 text-sm font-bold text-purple-950 dark:text-white">{String(value)}</div></div>; }
 function InlineStarStat({ label, value }: { label: string; value: number }) { return <div className="rounded-lg border border-purple-100 bg-purple-50/70 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950/60"><div className="text-[11px] font-bold uppercase tracking-[0.16em] text-purple-700 dark:text-purple-300">{label}</div><VisualStars value={value} /></div>; }
 function PitScoutCard({ data }: { data: any }) {
   const pit = data.pitData || data;
+  const images = pit.images || [];
+  
   return (
-    <div className="rounded-lg border border-purple-100 bg-purple-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/60">
-      <div className="flex items-center justify-between">
-        <div className="font-bold text-purple-950 dark:text-white">Scout: {pit.scoutName || 'Unknown'}</div>
-        <div className="text-xs text-slate-500 dark:text-slate-400">{new Date(pit.timestamp).toLocaleDateString()}</div>
+    <div className="rounded-lg border border-purple-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-purple-100 pb-3 dark:border-zinc-800">
+        <div className="flex items-center gap-2">
+          <div className="font-bold text-purple-950 dark:text-white">{pit.scoutName || 'Unknown Scout'}</div>
+          {pit.timestamp && (
+            <div className="text-xs text-slate-500 dark:text-slate-400">{new Date(pit.timestamp).toLocaleDateString()}</div>
+          )}
+        </div>
       </div>
       
+      {/* Photos */}
+      {images.length > 0 && (
+        <div className="mt-3">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+            {images.map((url: string, idx: number) => (
+              <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="group relative aspect-square overflow-hidden rounded-lg border border-purple-200 dark:border-zinc-700">
+                <img src={url} alt={`Photo ${idx + 1}`} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Main Info Grid */}
       <div className="mt-3 grid gap-2 text-sm">
-        {/* Robot Specs */}
+        {/* Robot Specs Row */}
         <div className="flex flex-wrap gap-2">
-          {pit.drivetrain && <span className="rounded bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-800 dark:bg-purple-900/40 dark:text-purple-200">{pit.drivetrain}</span>}
-          {pit.robotWeight && <span className="rounded bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-800 dark:bg-purple-900/40 dark:text-purple-200">{pit.robotWeight} lbs</span>}
-          {pit.dimensions && <span className="rounded bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-800 dark:bg-purple-900/40 dark:text-purple-200">{pit.dimensions}</span>}
+          {pit.drivetrain && <Badge text={pit.drivetrain} color="purple" />}
+          {pit.robotWeight && <Badge text={`${pit.robotWeight} lbs`} color="purple" />}
+          {pit.dimensions && <Badge text={pit.dimensions} color="purple" />}
         </div>
         
         {/* Capabilities */}
-        <div className="mt-2 flex flex-wrap gap-2">
-          {pit.canScoreFuel === 'yes' && <span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">FUEL: {pit.fuelCapacity || '?'}</span>}
-          {pit.canDriveOverBump === 'yes' && <span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">BUMP</span>}
-          {pit.canDriveUnderTrench === 'yes' && <span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">TRENCH</span>}
-          {pit.canClimb === 'yes' && <span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">Climbs</span>}
-          {pit.canDeliverToOutpost === 'yes' && <span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">OUTPOST</span>}
+        <div className="flex flex-wrap gap-2">
+          {pit.canScoreFuel === 'yes' && <Badge text={`Scores: ${pit.fuelCapacity || '?'}`} color="emerald" />}
+          {pit.canDriveOverBump === 'yes' && <Badge text="Bump" color="emerald" />}
+          {pit.canDriveUnderTrench === 'yes' && <Badge text="Trench" color="emerald" />}
+          {pit.canClimb === 'yes' && <Badge text="Climb" color="emerald" />}
+          {pit.canDeliverToOutpost === 'yes' && <Badge text="Outpost" color="emerald" />}
         </div>
         
-        {/* Auto */}
-        {pit.hasAuto === 'yes' && (
-          <div className="mt-2">
-            <span className="text-xs font-semibold text-purple-700 dark:text-purple-300">Auto: {pit.autoRoutine || 'Has auto'} (Reliability: {pit.autoReliability || 0}/10)</span>
-          </div>
-        )}
+        {/* Auto & Strategy */}
+        <div className="flex flex-wrap gap-2">
+          {pit.hasAuto === 'yes' && <Badge text="Has Auto" color="blue" />}
+          {pit.playStyle && <Badge text={pit.playStyle} color="amber" />}
+          {pit.improvedFromLast === 'yes' && <Badge text="Improved" color="amber" />}
+        </div>
         
-        {/* Play Style */}
-        {pit.playStyle && (
-          <div className="mt-2">
-            <span className="rounded bg-blue-100 px-2 py-1 text-xs font-semibold capitalize text-blue-800 dark:bg-blue-900/40 dark:text-blue-200">{pit.playStyle}</span>
-            {pit.humanPlayerSkill > 0 && <span className="ml-2 text-xs text-slate-600 dark:text-slate-400">HP Skill: {pit.humanPlayerSkill}/10</span>}
-          </div>
-        )}
+        {/* Text Fields */}
+        <div className="mt-2 space-y-2">
+          {pit.autoRoutine && (
+            <div className="text-sm">
+              <span className="font-semibold text-purple-700 dark:text-purple-300">Auto:</span>{' '}
+              <span className="text-slate-700 dark:text-slate-300">{pit.autoRoutine}</span>
+            </div>
+          )}
+          {pit.autoReliability && (
+            <div className="text-sm">
+              <span className="font-semibold text-purple-700 dark:text-purple-300">Auto Quality:</span>{' '}
+              <span className="text-slate-700 dark:text-slate-300">{pit.autoReliability}</span>
+            </div>
+          )}
+          {pit.driverExperience && (
+            <div className="text-sm">
+              <span className="font-semibold text-purple-700 dark:text-purple-300">Driver:</span>{' '}
+              <span className="text-slate-700 dark:text-slate-300">{pit.driverExperience}</span>
+            </div>
+          )}
+          {pit.humanPlayerSkill && (
+            <div className="text-sm">
+              <span className="font-semibold text-purple-700 dark:text-purple-300">HP Skill:</span>{' '}
+              <span className="text-slate-700 dark:text-slate-300">{pit.humanPlayerSkill}</span>
+            </div>
+          )}
+          {pit.driverNotes && (
+            <div className="text-sm">
+              <span className="font-semibold text-purple-700 dark:text-purple-300">Driver Notes:</span>{' '}
+              <span className="text-slate-700 dark:text-slate-300">{pit.driverNotes}</span>
+            </div>
+          )}
+          {pit.lastRegional && (
+            <div className="text-sm">
+              <span className="font-semibold text-purple-700 dark:text-purple-300">Last Regional:</span>{' '}
+              <span className="text-slate-700 dark:text-slate-300">{pit.lastRegional}</span>
+            </div>
+          )}
+        </div>
         
-        {/* Notes */}
-        {(pit.strengths || pit.weaknesses || pit.notes) && (
-          <div className="mt-2 space-y-1 text-xs text-slate-600 dark:text-slate-400">
-            {pit.strengths && <p><span className="font-semibold text-emerald-700 dark:text-emerald-400">Strengths:</span> {pit.strengths}</p>}
-            {pit.weaknesses && <p><span className="font-semibold text-red-700 dark:text-red-400">Weaknesses:</span> {pit.weaknesses}</p>}
-            {pit.notes && <p><span className="font-semibold text-purple-700 dark:text-purple-400">Notes:</span> {pit.notes}</p>}
+        {/* Strengths & Weaknesses */}
+        {(pit.strengths || pit.weaknesses) && (
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {pit.strengths && (
+              <div className="rounded bg-emerald-50 p-2 text-sm dark:bg-emerald-900/20">
+                <span className="font-semibold text-emerald-700 dark:text-emerald-400">Strengths:</span>{' '}
+                <span className="text-slate-700 dark:text-slate-300">{pit.strengths}</span>
+              </div>
+            )}
+            {pit.weaknesses && (
+              <div className="rounded bg-red-50 p-2 text-sm dark:bg-red-900/20">
+                <span className="font-semibold text-red-700 dark:text-red-400">Weaknesses:</span>{' '}
+                <span className="text-slate-700 dark:text-slate-300">{pit.weaknesses}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function Badge({ text, color }: { text: string; color: 'purple' | 'emerald' | 'blue' | 'amber' }) {
+  const colors = {
+    purple: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200',
+    emerald: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
+    blue: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
+    amber: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+  };
+  return (
+    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${colors[color]}`}>
+      {text}
+    </span>
   );
 }
 
@@ -428,13 +691,31 @@ function MatchDataCard({ match, pitScoutData = [] }: { match: any; pitScoutData?
   // Get all other fields
   const otherFields = Object.entries(match).filter(([key, value]) => !excludedFields.includes(key) && value !== undefined && value !== null && value !== '' && typeof value !== 'object');
   
-  // Categorize fields
+  // Categorize fields with conditional filtering
+  const defended = match['Defended'];
+  const climbAttempted = match['Climb Attempted'];
+  
   const ratings: Array<[string, any]> = [];
   const booleans: Array<[string, any]> = [];
   const numbers: Array<[string, any]> = [];
   const text: Array<[string, any]> = [];
   
   otherFields.forEach(([key, value]) => {
+    // Skip Defense Rating if they didn't defend
+    if (key === 'Defense Rating' && !defended) return;
+    
+    // Skip Climb fields if not attempted
+    if ((key === 'Climb Level' || key === 'Climb Failed') && !climbAttempted) return;
+    
+    // Skip redundant/irrelevant booleans
+    if (key === 'Climb Attempted') return; // Always true if we see climb data
+    if (key === 'Defended' && !value) return; // Don't show if false
+    if (key === 'Was Defended' && !value) return; // Don't show if false
+    if (key === 'Broke In Teleop' && !value) return; // Don't show if false
+    if (key === 'Disabled In Teleop' && !value) return; // Don't show if false
+    if (key === 'Disabled In Endgame' && !value) return; // Don't show if false
+    if (key === 'Robot Improved' && !value) return; // Don't show if false
+    
     if (key.includes('Rating') || key.includes('Impact')) {
       ratings.push([key, value]);
     } else if (typeof value === 'boolean') {
@@ -609,5 +890,65 @@ function StatBadge({ label, value, color }: { label: string; value: string | num
       <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
       <span className="text-lg font-black">{value}</span>
     </div>
+  );
+}
+
+function LongPressDeleteButton({ onDelete }: { onDelete: () => void }) {
+  const [isPressed, setIsPressed] = useState(false);
+  const [isRed, setIsRed] = useState(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const startPress = () => {
+    setIsPressed(true);
+    timerRef.current = setTimeout(() => {
+      setIsRed(true);
+      // Vibrate if supported
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(50);
+      }
+    }, 2000);
+  };
+  
+  const endPress = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (isRed) {
+      onDelete();
+    }
+    setIsPressed(false);
+    setIsRed(false);
+  };
+  
+  const cancelPress = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsPressed(false);
+    setIsRed(false);
+  };
+  
+  return (
+    <button
+      type="button"
+      onMouseDown={startPress}
+      onMouseUp={endPress}
+      onMouseLeave={cancelPress}
+      onTouchStart={startPress}
+      onTouchEnd={endPress}
+      onTouchMove={cancelPress}
+      className={`ml-1 flex h-4 w-4 items-center justify-center rounded-full transition-all duration-300 ${
+        isRed 
+          ? 'bg-red-600 scale-125' 
+          : isPressed 
+            ? 'bg-red-300 scale-110' 
+            : 'bg-red-200 hover:bg-red-300'
+      }`}
+      title="Hold for 2 seconds to delete"
+    >
+      <X className={`h-2.5 w-2.5 transition-colors ${isRed ? 'text-white' : 'text-red-700'}`} />
+    </button>
   );
 }

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { 
   Loader2, Plus, Save, Trash2, Search, Users, Calendar, Filter, X, ChevronDown, ChevronUp, 
   Shield, BarChart3, CheckCircle, Clock, UserCheck, Settings, ArrowRightLeft, ArrowRight 
@@ -62,6 +62,10 @@ export default function AdminPage() {
   // Users
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+
+  // Teams
+  const [teams, setTeams] = useState<{teamNumber: string; name?: string; nickname?: string}[]>([]);
+  const [isLoadingTeams, setIsLoadingTeams] = useState(false);
 
   // Assignments
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -138,11 +142,66 @@ export default function AdminPage() {
     setRegionals(nextRegionals);
   }, [ensurePracticeRegional]);
 
+  const loadTeams = useCallback(async (selectedYear: string, selectedRegional: string) => {
+    setIsLoadingTeams(true);
+    try {
+      // First try to load from Firebase
+      const snapshot = await getDocsFromServer(collection(db, `years/${selectedYear}/regionals/${selectedRegional}/teams`));
+      const teamsData = snapshot.docs.map((doc) => ({
+        teamNumber: doc.id,
+        ...(doc.data() as any),
+      })).sort((a, b) => Number(a.teamNumber) - Number(b.teamNumber));
+      
+      if (teamsData.length > 0) {
+        setTeams(teamsData);
+      } else {
+        // If no teams in Firebase, try to fetch from TBA
+        await fetchTeamsFromTBA(selectedYear, selectedRegional);
+      }
+    } catch (error) {
+      console.error('Error loading teams:', error);
+      setTeams([]);
+    } finally {
+      setIsLoadingTeams(false);
+    }
+  }, []);
+
+  const fetchTeamsFromTBA = async (selectedYear: string, selectedRegional: string) => {
+    try {
+      // Get the event key from regional code
+      const eventKey = `${selectedYear}${selectedRegional}`;
+      const response = await fetch(`https://www.thebluealliance.com/api/v3/event/${eventKey}/teams/simple`, {
+        headers: {
+          'X-TBA-Auth-Key': process.env.NEXT_PUBLIC_TBA_API_KEY || '',
+        },
+      });
+      
+      if (!response.ok) throw new Error('Failed to fetch from TBA');
+      
+      const tbaTeams = await response.json();
+      const formattedTeams = tbaTeams.map((t: any) => ({
+        teamNumber: String(t.team_number),
+        name: t.name,
+        nickname: t.nickname,
+      })).sort((a: any, b: any) => Number(a.teamNumber) - Number(b.teamNumber));
+      
+      setTeams(formattedTeams);
+      
+      // Save to Firebase for future use
+      await Promise.all(formattedTeams.map((team: any) => 
+        setDoc(doc(db, `years/${selectedYear}/regionals/${selectedRegional}/teams`, team.teamNumber), team, { merge: true })
+      ));
+    } catch (error) {
+      console.error('Error fetching from TBA:', error);
+      setTeams([]);
+    }
+  };
+
   const loadAssignments = useCallback(async () => {
     const snapshot = await getDocsFromServer(collection(db, `years/${year}/assignments`));
     const nextAssignments = snapshot.docs
       .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
-      .filter((a: any) => a.regional === regional || a.year === year)
+      .filter((a: any) => a.regional === regional)
       .sort((a: any, b: any) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
     setAssignments(nextAssignments);
   }, [year, regional]);
@@ -157,35 +216,146 @@ export default function AdminPage() {
     }
   }, []);
 
+  // Load current event settings on mount
   useEffect(() => {
     if (isAdmin) {
-      loadUsers();
-      loadYears();
       loadCurrentEvent();
     }
-  }, [isAdmin, loadUsers, loadYears, loadCurrentEvent]);
+  }, [isAdmin, loadCurrentEvent]);
 
+  // Load years on mount
+  useEffect(() => {
+    if (isAdmin) {
+      loadYears();
+    }
+  }, [isAdmin, loadYears]);
+
+  // Load regionals when year changes
   useEffect(() => {
     if (isAdmin && year) {
       loadRegionals(year);
-      loadAssignments();
     }
-  }, [isAdmin, year, regional, loadRegionals, loadAssignments]);
+  }, [isAdmin, year, loadRegionals]);
 
-  // Load transfer assignments
-  const loadTransferAssignments = useCallback(async () => {
-    const snapshot = await getDocsFromServer(collection(db, `years/${year}/assignments`));
-    const allAssignments = snapshot.docs
-      .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
-      .sort((a: any, b: any) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
-    setTransferAssignments(allAssignments);
-  }, [year]);
-
+  // Load teams when year or regional changes
   useEffect(() => {
-    if (isAdmin && year) {
-      loadTransferAssignments();
+    if (isAdmin && year && regional) {
+      loadTeams(year, regional);
     }
-  }, [isAdmin, year, loadTransferAssignments]);
+  }, [isAdmin, year, regional, loadTeams]);
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    let unsubscribe: (() => void) | undefined;
+
+    const setupListener = async () => {
+      setIsLoadingUsers(true);
+
+      // First fetch from server
+      try {
+        const snapshot = await getDocsFromServer(collection(db, 'users'));
+        const nextUsers = snapshot.docs
+          .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+          .sort((a: any, b: any) => Number(Boolean(a.approved)) - Number(Boolean(b.approved)) || String(a.email || '').localeCompare(String(b.email || '')));
+        setUsers(nextUsers);
+      } catch (error) {
+        console.error('Error fetching users from server:', error);
+      } finally {
+        setIsLoadingUsers(false);
+      }
+
+      // Then set up listener for updates
+      unsubscribe = onSnapshot(collection(db, 'users'), { includeMetadataChanges: true }, (snapshot) => {
+        // Only update if this is not from cache
+        if (!snapshot.metadata.fromCache) {
+          const nextUsers = snapshot.docs
+            .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+            .sort((a: any, b: any) => Number(Boolean(a.approved)) - Number(Boolean(b.approved)) || String(a.email || '').localeCompare(String(b.email || '')));
+          setUsers(nextUsers);
+        }
+      }, (error) => {
+        console.error('Error listening to users:', error);
+      });
+    };
+
+    setupListener();
+
+    return () => unsubscribe?.();
+  }, [isAdmin]);
+
+  // Real-time listener for assignments - fetch server-first then listen
+  useEffect(() => {
+    if (!isAdmin || !year) return;
+
+    let unsubscribe: (() => void) | undefined;
+
+    const setupListener = async () => {
+      // First fetch from server
+      try {
+        const snapshot = await getDocsFromServer(collection(db, `years/${year}/assignments`));
+        const nextAssignments = snapshot.docs
+          .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+          .filter((a: any) => a.regional === regional)
+          .sort((a: any, b: any) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
+        setAssignments(nextAssignments);
+      } catch (error) {
+        console.error('Error fetching assignments from server:', error);
+      }
+
+      // Then set up listener for updates
+      unsubscribe = onSnapshot(collection(db, `years/${year}/assignments`), { includeMetadataChanges: true }, (snapshot) => {
+        if (!snapshot.metadata.fromCache) {
+          const nextAssignments = snapshot.docs
+            .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+            .filter((a: any) => a.regional === regional)
+            .sort((a: any, b: any) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
+          setAssignments(nextAssignments);
+        }
+      }, (error) => {
+        console.error('Error listening to assignments:', error);
+      });
+    };
+
+    setupListener();
+
+    return () => unsubscribe?.();
+  }, [isAdmin, year, regional]);
+
+  // Real-time listener for transfer assignments - fetch server-first then listen
+  useEffect(() => {
+    if (!isAdmin || !year) return;
+
+    let unsubscribe: (() => void) | undefined;
+
+    const setupListener = async () => {
+      // First fetch from server
+      try {
+        const snapshot = await getDocsFromServer(collection(db, `years/${year}/assignments`));
+        const allAssignments = snapshot.docs
+          .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+          .sort((a: any, b: any) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
+        setTransferAssignments(allAssignments);
+      } catch (error) {
+        console.error('Error fetching transfer assignments from server:', error);
+      }
+
+      // Then set up listener for updates
+      unsubscribe = onSnapshot(collection(db, `years/${year}/assignments`), { includeMetadataChanges: true }, (snapshot) => {
+        if (!snapshot.metadata.fromCache) {
+          const allAssignments = snapshot.docs
+            .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+            .sort((a: any, b: any) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
+          setTransferAssignments(allAssignments);
+        }
+      }, (error) => {
+        console.error('Error listening to transfer assignments:', error);
+      });
+    };
+
+    setupListener();
+
+    return () => unsubscribe?.();
+  }, [isAdmin, year]);
 
   const handleSaveEvent = async () => {
     setIsSavingEvent(true);
@@ -268,8 +438,7 @@ export default function AdminPage() {
 
       setMessage(`Created ${assignmentsToCreate.length} assignment(s)`);
       setAssignMatch('');
-      await loadAssignments();
-      await loadTransferAssignments();
+      // No need to reload - onSnapshot will update automatically
     } catch (err: any) {
       setError(err?.message || 'Failed to create assignment');
     } finally {
@@ -279,8 +448,7 @@ export default function AdminPage() {
 
   const handleDeleteAssignment = async (assignmentId: string) => {
     await deleteDoc(doc(db, `years/${year}/assignments`, assignmentId));
-    await loadAssignments();
-    await loadTransferAssignments();
+    // No need to reload - onSnapshot will update automatically
   };
 
   const handleBulkDelete = async () => {
@@ -296,8 +464,7 @@ export default function AdminPage() {
       );
       setMessage(`Deleted ${selectedForDelete.size} assignment(s)`);
       setSelectedForDelete(new Set());
-      await loadAssignments();
-      await loadTransferAssignments();
+      // No need to reload - onSnapshot will update automatically
     } catch (err: any) {
       setError(err?.message || 'Failed to delete assignments');
     } finally {
@@ -323,7 +490,6 @@ export default function AdminPage() {
   };
 
   const handleTransferAssignments = async () => {
-    if (!selectedTransferUser || selectedTransferAssignments.size === 0) return;
     setIsTransferring(true);
     setError('');
     setMessage('');
@@ -346,8 +512,7 @@ export default function AdminPage() {
       setSelectedTransferAssignments(new Set());
       setShowTransferUI(false);
       setSelectedTransferUser('');
-      await loadAssignments();
-      await loadTransferAssignments();
+      // No need to reload - onSnapshot will update automatically
     } catch (err: any) {
       setError(err?.message || 'Failed to transfer assignments');
     } finally {
@@ -566,7 +731,7 @@ export default function AdminPage() {
                       </select>
                       <button
                         type="button"
-                        onClick={() => handleUpdateUser(entry.id, { approved: !entry.approved, role: entry.approved ? entry.role || 'pending' : 'user' })}
+                        onClick={() => handleUpdateUser(entry.id, { approved: !entry.approved, role: entry.approved ? entry.role || 'pending' : entry.role === 'pending' ? 'user' : entry.role })}
                         className="rounded-lg bg-purple-600 px-4 py-3 text-sm font-bold text-white"
                       >
                         {entry.approved ? 'Revoke' : 'Approve'}

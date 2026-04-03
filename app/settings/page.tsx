@@ -3,7 +3,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { updateProfile } from 'firebase/auth';
 import { ImagePlus, Loader2, Save, Settings, Shield, Trash2, UserCog, ArrowRightLeft, Users, ArrowRight } from 'lucide-react';
 import { auth, db } from '@/lib/firebase';
@@ -401,37 +401,84 @@ export default function SettingsPage() {
     setUsers((current) => current.filter((userEntry) => userEntry.id !== entry.id));
   };
 
-  // Load user's assignments and available scouts for transfer
-  const loadMyAssignments = useCallback(async () => {
-    if (!user || isAdmin) return;
-    try {
-      const [assignmentsSnap, usersSnap] = await Promise.all([
-        getDocsFromServer(query(collection(db, `years/${selectedYear}/assignments`), where('userId', '==', user.uid))),
-        getDocsFromServer(collection(db, 'users')),
-      ]);
-      const myAssigns = assignmentsSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .sort((a: any, b: any) => {
-          const aNum = Number(a.matchNumber) || 0;
-          const bNum = Number(b.matchNumber) || 0;
-          return aNum - bNum;
-        });
-      setMyAssignments(myAssigns);
-      
-      const otherScouts = usersSnap.docs
-        .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
-        .filter((u: any) => u.id !== user.uid && u.approved && (u.role === 'scout' || u.role === 'super_scout'));
-      setAvailableScouts(otherScouts);
-    } catch (e) {
-      console.error('Error loading assignments:', e);
-    }
-  }, [user, isAdmin, selectedYear]);
-
+  // Real-time listener for assignments and available scouts - fetch server-first then listen
   useEffect(() => {
-    if (!isAuthChecking && user && !isAdmin) {
-      loadMyAssignments();
-    }
-  }, [isAuthChecking, user, isAdmin, loadMyAssignments]);
+    if (!user || isAdmin || !selectedYear) return;
+
+    let unsubscribeAssignments: (() => void) | undefined;
+    let unsubscribeUsers: (() => void) | undefined;
+
+    const setupListeners = async () => {
+      // First fetch assignments from server
+      try {
+        const assignmentsQuery = query(
+          collection(db, `years/${selectedYear}/assignments`),
+          where('userId', '==', user.uid)
+        );
+        const snapshot = await getDocsFromServer(assignmentsQuery);
+        const myAssigns = snapshot.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a: any, b: any) => {
+            const aNum = Number(a.matchNumber) || 0;
+            const bNum = Number(b.matchNumber) || 0;
+            return aNum - bNum;
+          });
+        setMyAssignments(myAssigns);
+      } catch (error) {
+        console.error('Error fetching assignments from server:', error);
+      }
+
+      // First fetch users from server
+      try {
+        const usersSnapshot = await getDocsFromServer(collection(db, 'users'));
+        const otherScouts = usersSnapshot.docs
+          .map((d) => ({ id: d.id, ...(d.data() as any) }))
+          .filter((u: any) => u.id !== user.uid && u.approved && (u.role === 'scout' || u.role === 'super_scout'));
+        setAvailableScouts(otherScouts);
+      } catch (error) {
+        console.error('Error fetching users from server:', error);
+      }
+
+      // Then set up listeners for updates
+      const assignmentsQuery = query(
+        collection(db, `years/${selectedYear}/assignments`),
+        where('userId', '==', user.uid)
+      );
+
+      unsubscribeAssignments = onSnapshot(assignmentsQuery, { includeMetadataChanges: true }, (snapshot) => {
+        if (!snapshot.metadata.fromCache) {
+          const myAssigns = snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => {
+              const aNum = Number(a.matchNumber) || 0;
+              const bNum = Number(b.matchNumber) || 0;
+              return aNum - bNum;
+            });
+          setMyAssignments(myAssigns);
+        }
+      }, (error) => {
+        console.error('Error listening to assignments:', error);
+      });
+
+      unsubscribeUsers = onSnapshot(collection(db, 'users'), { includeMetadataChanges: true }, (snapshot) => {
+        if (!snapshot.metadata.fromCache) {
+          const otherScouts = snapshot.docs
+            .map((d) => ({ id: d.id, ...(d.data() as any) }))
+            .filter((u: any) => u.id !== user.uid && u.approved && (u.role === 'scout' || u.role === 'super_scout'));
+          setAvailableScouts(otherScouts);
+        }
+      }, (error) => {
+        console.error('Error listening to users:', error);
+      });
+    };
+
+    setupListeners();
+
+    return () => {
+      unsubscribeAssignments?.();
+      unsubscribeUsers?.();
+    };
+  }, [user, isAdmin, selectedYear]);
 
   const handleTransferAssignments = async () => {
     if (!selectedTransferScout || selectedAssignments.size === 0) return;
@@ -455,10 +502,10 @@ export default function SettingsPage() {
       }));
       
       setMessage(`Transferred ${assignmentsToTransfer.length} assignment(s) to ${targetScout.name || targetScout.email}`);
-      setMyAssignments(current => current.filter(a => !selectedAssignments.has(a.id)));
       setSelectedAssignments(new Set());
       setShowTransferUI(false);
       setSelectedTransferScout('');
+      // No need to update state - onSnapshot will update automatically
     } catch (err: any) {
       setError(err?.message || 'Failed to transfer assignments');
     } finally {

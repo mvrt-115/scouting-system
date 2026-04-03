@@ -12,6 +12,7 @@ interface CacheData {
   superScoutData: any[];
   baMatches: any[];
   teams: any[];
+  pitScoutingData: Record<string, any>; // teamNumber -> pit data
   matchTeams: Record<string, { red?: string[]; blue?: string[] }>;
   eventContext: { year: string; regional: string; regionalCode: string };
   timestamp: number;
@@ -22,6 +23,7 @@ interface UseMatchDataCacheReturn {
   reports: any[];
   baMatches: any[];
   teams: any[];
+  pitScoutingData: Record<string, any>;
   matchTeams: Record<string, { red?: string[]; blue?: string[] }>;
   eventContext: { year: string; regional: string; regionalCode: string };
   isLoading: boolean;
@@ -71,6 +73,7 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
   const [reports, setReports] = useState<any[]>([]);
   const [baMatches, setBaMatches] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
+  const [pitScoutingData, setPitScoutingData] = useState<Record<string, any>>({});
   const [matchTeams, setMatchTeams] = useState<Record<string, { red?: string[]; blue?: string[] }>>({});
   const [eventContext, setEventContext] = useState({ year: '2026', regional: 'practice', regionalCode: 'practice' });
   const [isLoading, setIsLoading] = useState(true);
@@ -95,11 +98,40 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
       
       // Collect all match data from all teams
       const allMatchData: any[] = [];
+      const pitDataMap: Record<string, any> = {};
+      
       for (const team of teamsList) {
         const matchesSnapshot = await getDocs(collection(db, `years/${year}/regionals/${regional}/teams/${team.id}/matches`));
         matchesSnapshot.docs.forEach(doc => {
           allMatchData.push({ id: doc.id, teamNumber: team.id, ...(doc.data() as any) });
         });
+        
+        // Load pit scouting data for this team
+        const pitSnapshot = await getDocs(collection(db, `years/${year}/regionals/${regional}/teams/${team.id}/pit_scouting`));
+        if (!pitSnapshot.empty) {
+          pitDataMap[team.id] = pitSnapshot.docs[0].data();
+        }
+      }
+      
+      // Also check for teams that only have pit scouting (no team doc or matches)
+      // Get all teams from match_teams to find all event teams
+      const matchTeamsSnapshot = await getDocs(collection(db, `years/${year}/regionals/${regional}/match_teams`));
+      const allEventTeams = new Set<string>();
+      matchTeamsSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.teams && Array.isArray(data.teams)) {
+          data.teams.forEach((t: string) => allEventTeams.add(String(t)));
+        }
+      });
+      
+      // For teams not already in our list, check if they have pit data
+      for (const teamNumber of allEventTeams) {
+        if (!pitDataMap[teamNumber]) {
+          const pitSnapshot = await getDocs(collection(db, `years/${year}/regionals/${regional}/teams/${teamNumber}/pit_scouting`));
+          if (!pitSnapshot.empty) {
+            pitDataMap[teamNumber] = pitSnapshot.docs[0].data();
+          }
+        }
       }
       
       const nextRows = allMatchData
@@ -113,9 +145,7 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
       const baMatchesSnapshot = await getDocs(collection(db, `years/${year}/regionals/${regional}/ba_matches`));
       const nextBaMatches = baMatchesSnapshot.docs.map(entry => ({ id: entry.id, ...entry.data() }));
 
-      const matchTeamsSnapshot = await getDocs(collection(db, `years/${year}/regionals/${regional}/match_teams`));
-
-      // Build matchTeams map from match_teams collection
+      // Build matchTeams map from match_teams collection (already queried above)
       const matchTeamsMap: Record<string, { red?: string[]; blue?: string[] }> = {};
       matchTeamsSnapshot.docs.forEach(doc => {
         const data = doc.data();
@@ -131,6 +161,7 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
       setReports(nextReports);
       setBaMatches(nextBaMatches);
       setTeams(teamsList);
+      setPitScoutingData(pitDataMap);
       setMatchTeams(matchTeamsMap);
 
       saveToCache({
@@ -138,6 +169,7 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
         superScoutData: nextReports,
         baMatches: nextBaMatches,
         teams: teamsList,
+        pitScoutingData: pitDataMap,
         matchTeams: matchTeamsMap,
         eventContext: ctx,
       });
@@ -149,6 +181,7 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
         setReports(cached.superScoutData);
         setBaMatches(cached.baMatches);
         setTeams(cached.teams);
+        setPitScoutingData(cached.pitScoutingData || {});
         setMatchTeams(cached.matchTeams || {});
         setEventContext(cached.eventContext);
         setIsFromCache(true);
@@ -165,6 +198,7 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
       setReports(cached.superScoutData);
       setBaMatches(cached.baMatches);
       setTeams(cached.teams);
+      setPitScoutingData(cached.pitScoutingData || {});
       setMatchTeams(cached.matchTeams || {});
       setEventContext(cached.eventContext);
       setIsFromCache(true);
@@ -181,6 +215,7 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
         setReports(cached.superScoutData);
         setBaMatches(cached.baMatches);
         setTeams(cached.teams);
+        setPitScoutingData(cached.pitScoutingData || {});
         setMatchTeams(cached.matchTeams || {});
         setEventContext(cached.eventContext);
         setIsFromCache(true);
@@ -189,5 +224,5 @@ export function useMatchDataCache(isApproved: boolean, userId: string | null): U
     }
   }, [isApproved, userId, fetchData]);
 
-  return { rows, reports, baMatches, teams, matchTeams, eventContext, isLoading, isFromCache, refresh: fetchData };
+  return { rows, reports, baMatches, teams, pitScoutingData, matchTeams, eventContext, isLoading, isFromCache, refresh: fetchData };
 }

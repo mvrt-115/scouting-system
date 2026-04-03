@@ -109,19 +109,40 @@ function DotWithTouch({
   onRemove?: (point: FieldSelection) => void;
 }) {
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const isLongPress = useRef(false);
 
   const startLongPress = useCallback(() => {
+    isLongPress.current = false;
     longPressTimer.current = setTimeout(() => {
+      isLongPress.current = true;
       onRemove?.(point);
-    }, 500);
+    }, 400);
   }, [onRemove, point]);
 
-  const endLongPress = useCallback(() => {
+  const endLongPress = useCallback((e?: MouseEvent<HTMLDivElement> | TouchEvent<HTMLDivElement>) => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
+    return isLongPress.current;
   }, []);
+
+  const handleMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startLongPress();
+  };
+
+  const handleMouseUp = (e: MouseEvent<HTMLDivElement>) => {
+    const wasLongPress = endLongPress(e);
+    if (!wasLongPress) {
+      onRemove?.(point);
+    }
+  };
+
+  const handleMouseLeave = () => {
+    endLongPress();
+  };
 
   const handleTouchStart = (e: TouchEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -130,9 +151,10 @@ function DotWithTouch({
   };
 
   const handleTouchEnd = (e: TouchEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    endLongPress();
+    const wasLongPress = endLongPress(e);
+    if (!wasLongPress) {
+      onRemove?.(point);
+    }
   };
 
   const handleTouchMove = (e: TouchEvent<HTMLDivElement>) => {
@@ -141,29 +163,19 @@ function DotWithTouch({
     endLongPress();
   };
 
-  const handleClick = (e: MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-  };
-
-  const handleDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.nativeEvent.stopImmediatePropagation();
-    onRemove?.(point);
-  };
-
   return (
     <div
-      className="absolute z-20 aspect-square w-[1.3%] sm:w-[1%] -translate-x-1/2 -translate-y-1/2 cursor-pointer touch-none rounded-full border-2 border-white bg-purple-600 shadow-lg shadow-purple-900/30 ring-2 ring-purple-950/35 hover:scale-125 transition-transform active:scale-150 active:bg-red-500"
+      className={`absolute z-20 aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-purple-600 shadow-lg shadow-purple-900/30 ${onRemove ? 'w-[3%] sm:w-[1.5%] min-w-[20px] min-h-[20px] cursor-pointer touch-none ring-2 ring-purple-950/35 hover:scale-125 transition-transform active:scale-150 active:bg-red-500' : 'w-[2%] sm:w-[1%] min-w-[12px] min-h-[12px] ring-1 ring-purple-950/20'}`}
       style={{ left: `${point.x}%`, top: `${point.y}%` }}
-      onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onTouchMove={handleTouchMove}
       onContextMenu={(e) => e.preventDefault()}
-      title="Double-click or long-press to remove"
-      aria-label={`Position at ${point.x}%, ${point.y}% - double-click or long-press to remove`}
+      title={onRemove ? "Click or long-press to remove" : undefined}
+      aria-label={onRemove ? `Position at ${point.x}%, ${point.y}% - click or long-press to remove` : `Position at ${point.x}%, ${point.y}%`}
     />
   );
 }

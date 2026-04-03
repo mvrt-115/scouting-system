@@ -54,6 +54,8 @@ export function Year2026Viewer({
   rows,
   reports,
   baMatches,
+  teams,
+  pitScoutingData,
   year,
   regional,
   regionalCode,
@@ -61,6 +63,8 @@ export function Year2026Viewer({
   rows: ViewerRow[];
   reports: SuperScoutReport[];
   baMatches: any[];
+  teams: any[];
+  pitScoutingData: Record<string, any>;
   year: string;
   regional: string;
   regionalCode: string;
@@ -71,7 +75,7 @@ export function Year2026Viewer({
   const [isLoadingAi, setIsLoadingAi] = useState(false);
 
   const matchScores = useMemo(() => normalizeMatchScores(baMatches), [baMatches]);
-  const summaries = useMemo(() => buildSummaries(rows, reports, matchScores, rankMap), [rows, reports, matchScores, rankMap]);
+  const summaries = useMemo(() => buildSummaries(rows, reports, matchScores, rankMap, teams, pitScoutingData), [rows, reports, matchScores, rankMap, teams, pitScoutingData]);
   const matchGroups = useMemo(() => buildMatchGroups(rows, reports), [rows, reports]);
   const graphData = useMemo(
     () =>
@@ -278,6 +282,35 @@ function MatchView({ matchGroups }: { matchGroups: Array<{ key: string; matchNum
   );
 }
 
+const tableColumns = [
+  { key: 'rank', label: 'Rank', type: 'number' },
+  { key: 'teamNumber', label: 'Team', type: 'team' },
+  { key: 'matchCount', label: 'Matches', type: 'number' },
+  { key: 'averageMatchScore', label: 'Avg Score', type: 'number' },
+  { key: 'overall', label: 'Overall', type: 'rating', field: 'Overall Match Impact' },
+  { key: 'auto', label: 'Auto', type: 'rating', field: 'Auto Scoring Rating' },
+  { key: 'autoAccuracy', label: 'Auto Acc', type: 'rating', field: 'Auto Accuracy Rating' },
+  { key: 'driver', label: 'Driver', type: 'rating', field: 'Driver Rating' },
+  { key: 'speed', label: 'Speed', type: 'rating', field: 'Speed Rating' },
+  { key: 'scoring', label: 'Scoring', type: 'rating', field: 'Scoring Threat Rating' },
+  { key: 'accuracy', label: 'Accuracy', type: 'rating', field: 'Accuracy Rating' },
+  { key: 'defense', label: 'Defense', type: 'rating', field: 'Defense Rating' },
+  { key: 'reliability', label: 'Reliability', type: 'rating', field: 'Robot Reliability Rating' },
+  { key: 'averageHp', label: 'HP', type: 'number' },
+  { key: 'averageHpAuto', label: 'HP Auto', type: 'number' },
+  { key: 'climbRate', label: 'Climb %', type: 'percent' },
+  { key: 'preferredRole', label: 'Role', type: 'text' },
+  { key: 'pitDrivetrain', label: 'Drivetrain', type: 'text' },
+  { key: 'pitWeight', label: 'Weight', type: 'text' },
+  { key: 'pitAuto', label: 'Has Auto', type: 'text' },
+  { key: 'pitAutoReliability', label: 'Auto Quality', type: 'text' },
+  { key: 'pitFuel', label: 'Can Score', type: 'text' },
+  { key: 'pitClimb', label: 'Can Climb', type: 'text' },
+  { key: 'pitImproved', label: 'Improved', type: 'text' },
+  { key: 'pitPlayStyle', label: 'Play Style', type: 'text' },
+  { key: 'pitStrengths', label: 'Strengths', type: 'text' },
+];
+
 function TableView({
   summaries,
   graphData,
@@ -290,14 +323,8 @@ function TableView({
   regional: string;
 }) {
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
-  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set([
-    'rank', 'teamNumber', 'matchCount', 'overall', 'auto', 'driver', 'scoring', 'defense', 'climbRate', 'preferredRole',
-    'pitFuel', 'pitBump', 'pitTrench', 'pitClimb', 'pitOutpost', 'pitAuto'
-  ]));
-  const [columnOrder, setColumnOrder] = useState<string[]>([
-    'rank', 'teamNumber', 'matchCount', 'overall', 'auto', 'driver', 'scoring', 'defense', 'climbRate', 'preferredRole',
-    'pitFuel', 'pitBump', 'pitTrench', 'pitClimb', 'pitOutpost', 'pitAuto'
-  ]);
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set(tableColumns.map(c => c.key)));
+  const [columnOrder, setColumnOrder] = useState<string[]>(tableColumns.map(c => c.key));
   const [showColumnPanel, setShowColumnPanel] = useState(false);
   const [graphType, setGraphType] = useState<'scatter' | 'bar' | 'none'>('none');
   const [xAxis, setXAxis] = useState<string>('teamNumber');
@@ -307,20 +334,8 @@ function TableView({
 
   // Load saved preferences from localStorage
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('tableViewPrefs');
-      if (saved) {
-        const prefs = JSON.parse(saved);
-        if (prefs.visibleColumns) setVisibleColumns(new Set(prefs.visibleColumns));
-        if (prefs.columnOrder) setColumnOrder(prefs.columnOrder);
-        if (prefs.sortConfig) setSortConfig(prefs.sortConfig);
-        if (prefs.graphType) setGraphType(prefs.graphType);
-        if (prefs.xAxis) setXAxis(prefs.xAxis);
-        if (prefs.yAxis) setYAxis(prefs.yAxis);
-      }
-    } catch {
-      // Ignore localStorage errors
-    }
+    // Clear corrupted cache
+    localStorage.removeItem('tableViewPrefs');
     setIsLoaded(true);
   }, []);
 
@@ -341,31 +356,7 @@ function TableView({
     }
   }, [visibleColumns, columnOrder, sortConfig, graphType, xAxis, yAxis, isLoaded]);
 
-  const allColumns = [
-    { key: 'rank', label: 'Rank', type: 'number' },
-    { key: 'teamNumber', label: 'Team', type: 'team' },
-    { key: 'matchCount', label: 'Matches', type: 'number' },
-    { key: 'averageMatchScore', label: 'Avg Score', type: 'number' },
-    { key: 'overall', label: 'Overall', type: 'rating', field: 'Overall Match Impact' },
-    { key: 'auto', label: 'Auto', type: 'rating', field: 'Auto Scoring Rating' },
-    { key: 'autoAccuracy', label: 'Auto Acc', type: 'rating', field: 'Auto Accuracy Rating' },
-    { key: 'driver', label: 'Driver', type: 'rating', field: 'Driver Rating' },
-    { key: 'speed', label: 'Speed', type: 'rating', field: 'Speed Rating' },
-    { key: 'scoring', label: 'Scoring', type: 'rating', field: 'Scoring Threat Rating' },
-    { key: 'accuracy', label: 'Accuracy', type: 'rating', field: 'Accuracy Rating' },
-    { key: 'defense', label: 'Defense', type: 'rating', field: 'Defense Rating' },
-    { key: 'reliability', label: 'Reliability', type: 'rating', field: 'Robot Reliability Rating' },
-    { key: 'averageHp', label: 'HP', type: 'number' },
-    { key: 'averageHpAuto', label: 'HP Auto', type: 'number' },
-    { key: 'climbRate', label: 'Climb %', type: 'percent' },
-    { key: 'preferredRole', label: 'Role', type: 'text' },
-    { key: 'pitFuel', label: 'Pit FUEL', type: 'text' },
-    { key: 'pitBump', label: 'Pit BUMP', type: 'text' },
-    { key: 'pitTrench', label: 'Pit TRENCH', type: 'text' },
-    { key: 'pitClimb', label: 'Pit CLIMB', type: 'text' },
-    { key: 'pitOutpost', label: 'Pit OUTPOST', type: 'text' },
-    { key: 'pitAuto', label: 'Pit AUTO', type: 'text' },
-  ];
+  const allColumns = tableColumns;
 
   const sortedSummaries = useMemo(() => {
     if (!sortConfig) return summaries;
@@ -489,12 +480,15 @@ function TableView({
       case 'averageHpAuto': return summary.averageHpAuto.toFixed(1);
       case 'climbRate': return `${summary.climbRate.toFixed(0)}%`;
       case 'preferredRole': return summary.preferredRole;
+      case 'pitDrivetrain': return pit.drivetrain || '-';
+      case 'pitWeight': return pit.robotWeight || '-';
+      case 'pitAuto': return pit.hasAuto === 'yes' ? 'Yes' : pit.hasAuto === 'maybe' ? 'Maybe' : 'No';
+      case 'pitAutoReliability': return pit.autoReliability || '-';
       case 'pitFuel': return pit.canScoreFuel === 'yes' ? (pit.fuelCapacity || 'Yes') : '-';
-      case 'pitBump': return pit.canDriveOverBump === 'yes' ? 'Yes' : '-';
-      case 'pitTrench': return pit.canDriveUnderTrench === 'yes' ? 'Yes' : '-';
-      case 'pitClimb': return pit.canClimb === 'yes' ? 'Yes' : '-';
-      case 'pitOutpost': return pit.canDeliverToOutpost === 'yes' ? 'Yes' : '-';
-      case 'pitAuto': return pit.hasAuto === 'yes' ? 'Yes' : '-';
+      case 'pitClimb': return pit.canClimb === 'yes' ? 'Yes' : pit.canClimb === 'maybe' ? 'Maybe' : '-';
+      case 'pitImproved': return pit.improvedFromLast === 'yes' ? 'Yes' : pit.improvedFromLast === 'maybe' ? 'Maybe' : '-';
+      case 'pitPlayStyle': return pit.playStyle || '-';
+      case 'pitStrengths': return pit.strengths ? (pit.strengths.slice(0, 20) + (pit.strengths.length > 20 ? '...' : '')) : '-';
       default: return '-';
     }
   };
@@ -530,6 +524,19 @@ function TableView({
           className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-sm font-bold text-purple-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-purple-200"
         >
           {showColumnPanel ? 'Hide' : 'Show'} Columns
+        </button>
+        <button
+          onClick={() => {
+            localStorage.removeItem('tableViewPrefs');
+            setVisibleColumns(new Set(tableColumns.map(c => c.key)));
+            setColumnOrder(tableColumns.map(c => c.key));
+            setSortConfig(null);
+            setGraphType('none');
+            setYAxis('auto');
+          }}
+          className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 dark:border-red-800 dark:bg-red-900/30 dark:text-red-200"
+        >
+          Reset
         </button>
         <select
           value={graphType}
@@ -588,6 +595,9 @@ function TableView({
 
       {/* Table */}
       <div className="rounded-xl border border-purple-200/70 bg-white/85 p-5 shadow-xl shadow-purple-900/5 dark:border-zinc-800 dark:bg-zinc-900/80">
+        <div className="mb-2 text-sm text-slate-500">
+          Teams: {summaries.length} | Columns: {visibleOrderedColumns.length}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
@@ -744,9 +754,9 @@ function ScatterPlot({ data, xKey, yKey, allColumns }: { data: TeamSummary[]; xK
             <circle
               cx={`${(p.x / maxX) * 90 + 5}%`}
               cy={`${100 - (p.y / maxY) * 90 - 5}%`}
-              r="8"
+              r="4"
               className="fill-purple-500 stroke-purple-700 dark:fill-purple-400 dark:stroke-purple-200"
-              strokeWidth="2"
+              strokeWidth="1"
             />
             <text
               x={`${(p.x / maxX) * 90 + 5}%`}
@@ -894,11 +904,55 @@ function SuperMatchCard({ report, rows }: { report: SuperScoutReport; rows: View
   );
 }
 
-function buildSummaries(rows: ViewerRow[], reports: SuperScoutReport[], matchScores: MatchScore[], rankMap: Record<string, number>) {
+function buildSummaries(rows: ViewerRow[], reports: SuperScoutReport[], matchScores: MatchScore[], rankMap: Record<string, number>, teams: any[] = [], pitScoutingData: Record<string, any> = {}) {
+  console.log('buildSummaries called:', { rowsCount: rows.length, teamsCount: teams.length, pitDataKeys: Object.keys(pitScoutingData) });
+  
   const byTeam = new Map<string, TeamSummary>();
   const roleBuckets = new Map<string, string[]>();
   const teamNotes = new Map<string, string[]>();
   const allianceNotes = new Map<string, string[]>();
+
+  // First, create entries for all teams that have pit scouting data
+  const allTeamNumbers = new Set<string>();
+  
+  // Add teams from match scouting
+  rows.forEach(row => {
+    if (row.teamNumber) allTeamNumbers.add(String(row.teamNumber));
+  });
+  
+  // Add teams from the teams collection
+  teams.forEach(team => {
+    if (team.teamNumber || team.id) allTeamNumbers.add(String(team.teamNumber || team.id));
+  });
+  
+  // Add teams that have pit scouting data
+  Object.keys(pitScoutingData).forEach(teamNumber => {
+    allTeamNumbers.add(teamNumber);
+  });
+
+  console.log('All team numbers:', Array.from(allTeamNumbers));
+
+  // Initialize summaries for all teams
+  allTeamNumbers.forEach(teamNumber => {
+    byTeam.set(teamNumber, {
+      teamNumber,
+      matchCount: 0,
+      rank: rankMap[teamNumber] || null,
+      averageMatchScore: null,
+      averages: {},
+      averageHpAuto: 0,
+      averageHp: 0,
+      preferredRole: '',
+      climbRate: 0,
+      reliability: 0,
+      startPoints: [],
+      shotPoints: [],
+      matches: [],
+      superNotes: [],
+      allianceNotes: [],
+      pitData: pitScoutingData[teamNumber] || {},
+    });
+  });
 
   reports.forEach((report) => {
     Object.entries(report.data?.teamSpecificNotes || {}).forEach(([team, note]) => {
@@ -923,24 +977,8 @@ function buildSummaries(rows: ViewerRow[], reports: SuperScoutReport[], matchSco
     const teamNumber = String(row.teamNumber || '');
     if (!teamNumber) return;
 
-    const current =
-      byTeam.get(teamNumber) || {
-        teamNumber,
-        matchCount: 0,
-        rank: rankMap[teamNumber] || null,
-        averageMatchScore: null,
-        averages: {},
-        averageHpAuto: 0,
-        averageHp: 0,
-        preferredRole: '',
-        climbRate: 0,
-        reliability: 0,
-        startPoints: [],
-        shotPoints: [],
-        matches: [],
-        superNotes: [],
-        allianceNotes: [],
-      };
+    const current = byTeam.get(teamNumber);
+    if (!current) return;
 
     current.matchCount += 1;
     current.matches.push(row);

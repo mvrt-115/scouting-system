@@ -13,12 +13,23 @@ export default function DataViewerPage() {
   const { user, userData, isAuthChecking, isAdmin } = useAuth();
   const { pageVisibility, isLoadingVisibility } = usePageVisibility();
 
-  const { rows, reports, baMatches, eventContext, isLoading: cacheLoading, isFromCache } = useMatchDataCache(
+  const { rows, reports, baMatches, teams, pitScoutingData, eventContext, isLoading: cacheLoading, isFromCache } = useMatchDataCache(
     Boolean(userData?.approved),
     user?.uid || null
   );
 
   const [isPageReady, setIsPageReady] = useState(true);
+
+  // Debug logging
+  useEffect(() => {
+    console.log('DataViewer Debug:', {
+      rowsCount: rows.length,
+      firstRow: rows[0] ? { teamNumber: rows[0].teamNumber, matchNumber: rows[0].matchNumber, hasRatings: !!rows[0]['Overall Match Impact'] } : null,
+      teamsCount: teams.length,
+      pitDataCount: Object.keys(pitScoutingData).length,
+      isFromCache
+    });
+  }, [rows, teams, pitScoutingData, isFromCache]);
 
   useEffect(() => {
     if (!isAuthChecking && !user) {
@@ -65,6 +76,8 @@ export default function DataViewerPage() {
         rows={rows}
         reports={reports}
         baMatches={baMatches}
+        teams={teams}
+        pitScoutingData={pitScoutingData}
         year={eventContext.year}
         regional={eventContext.regional}
         regionalCode={eventContext.regionalCode}

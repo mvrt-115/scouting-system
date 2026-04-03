@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Bot, Send, ListOrdered, ChevronRight, Loader2, Clock, Plus, Trash2, Save, Sparkles, AlertCircle, Paperclip, Mic, MicOff } from 'lucide-react';
+import { Bot, Send, ListOrdered, ChevronRight, Loader2, Clock, Plus, Trash2, Save, Sparkles, AlertCircle, Paperclip, Mic, MicOff, Ban, Eye } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
@@ -10,6 +10,7 @@ import { collection, getDocs, getDocsFromServer, doc, setDoc, getDoc, getDocFrom
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
+import { isTeamOnDnpList, isTeamOnWatchList, getDnpReason, getWatchReason } from '@/components/GlobalWidgets';
 
 export default function Picklist() {
   const [messages, setMessages] = useState([
@@ -727,19 +728,47 @@ export default function Picklist() {
             <span className="text-xs bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-300 px-2 py-1 rounded-full">{teams.length}</span>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {teams.filter(t => !picklist.find(p => p.id === t.id)).map((team) => (
-              <div 
-                key={team.id} 
-                onClick={() => addToPicklist(team)}
-                className="flex items-center justify-between p-3 hover:bg-purple-50 dark:hover:bg-zinc-800 rounded-lg cursor-pointer group transition-colors border border-transparent hover:border-purple-200 dark:hover:border-zinc-700"
-              >
-                <div>
-                  <h3 className="font-bold text-gray-900 dark:text-zinc-100">Team {team.id}</h3>
-                  <p className="text-[10px] text-gray-500 dark:text-zinc-400 line-clamp-1">{team.name}</p>
+            {teams.filter(t => !picklist.find(p => p.id === t.id)).map((team) => {
+              const isDnp = isTeamOnDnpList(team.id);
+              const isWatch = isTeamOnWatchList(team.id);
+              const dnpReason = getDnpReason(team.id);
+              const watchReason = getWatchReason(team.id);
+              
+              let borderClass = 'border-transparent hover:border-purple-200 dark:hover:border-zinc-700';
+              let bgClass = 'hover:bg-purple-50 dark:hover:bg-zinc-800';
+              let label = null;
+              
+              if (isDnp) {
+                borderClass = 'border-red-300 bg-red-50 dark:bg-red-900/20 dark:border-red-800';
+                bgClass = 'hover:bg-red-100 dark:hover:bg-red-900/30';
+                label = <span className="text-[10px] bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-1"><Ban className="h-3 w-3" />DNP</span>;
+              } else if (isWatch) {
+                borderClass = 'border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-800';
+                bgClass = 'hover:bg-emerald-100 dark:hover:bg-emerald-900/30';
+                label = <span className="text-[10px] bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-1"><Eye className="h-3 w-3" />WATCH</span>;
+              }
+              
+              return (
+                <div 
+                  key={team.id} 
+                  onClick={() => addToPicklist(team)}
+                  className={`flex items-center justify-between p-3 rounded-lg cursor-pointer group transition-colors border ${borderClass} ${bgClass}`}
+                  title={dnpReason || watchReason || ''}
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className={`font-bold ${isDnp ? 'text-red-900 dark:text-red-100' : isWatch ? 'text-emerald-900 dark:text-emerald-100' : 'text-gray-900 dark:text-zinc-100'}`}>Team {team.id}</h3>
+                      {label}
+                    </div>
+                    <p className="text-[10px] text-gray-500 dark:text-zinc-400 line-clamp-1">{team.name}</p>
+                    {(dnpReason || watchReason) && (
+                      <p className="text-[10px] text-gray-400 dark:text-zinc-500 mt-0.5 italic">{dnpReason || watchReason}</p>
+                    )}
+                  </div>
+                  <Plus className="h-4 w-4 text-gray-400 dark:text-zinc-500 group-hover:text-purple-600" />
                 </div>
-                <Plus className="h-4 w-4 text-gray-400 dark:text-zinc-500 group-hover:text-purple-600" />
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -760,42 +789,62 @@ export default function Picklist() {
                 <p className="text-xs">Click teams on the left to add them.</p>
               </div>
             ) : (
-              picklist.map((team, index) => (
-                <div key={team.id} className="flex items-center gap-4 p-3 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-700 rounded-lg shadow-sm hover:border-purple-300 transition-all group">
-                  <span className="font-bold text-gray-400 dark:text-zinc-500 w-6">{index + 1}.</span>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-bold text-gray-900 dark:text-zinc-100">Team {team.id}</h3>
-                      <Link href={`/teams/${team.id}?year=${currentEvent?.year}&regional=${currentEvent?.regional}`} className="text-[10px] text-purple-600 hover:underline">
-                        View Stats
-                      </Link>
+              picklist.map((team, index) => {
+                const isDnp = isTeamOnDnpList(team.id);
+                const isWatch = isTeamOnWatchList(team.id);
+                
+                let rowBorderClass = 'border-gray-200 dark:border-zinc-700';
+                let rowBgClass = 'bg-white dark:bg-zinc-900';
+                let rowLabel = null;
+                
+                if (isDnp) {
+                  rowBorderClass = 'border-red-300 dark:border-red-800';
+                  rowBgClass = 'bg-red-50 dark:bg-red-900/20';
+                  rowLabel = <span className="text-xs bg-red-100 dark:bg-red-800 text-red-700 dark:text-red-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Ban className="h-3 w-3" />DNP</span>;
+                } else if (isWatch) {
+                  rowBorderClass = 'border-emerald-300 dark:border-emerald-800';
+                  rowBgClass = 'bg-emerald-50 dark:bg-emerald-900/20';
+                  rowLabel = <span className="text-xs bg-emerald-100 dark:bg-emerald-800 text-emerald-700 dark:text-emerald-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Eye className="h-3 w-3" />WATCH</span>;
+                }
+                
+                return (
+                  <div key={team.id} className={`flex items-center gap-4 p-3 ${rowBgClass} border ${rowBorderClass} rounded-lg shadow-sm hover:border-purple-300 transition-all group`}>
+                    <span className="font-bold text-gray-400 dark:text-zinc-500 w-6">{index + 1}.</span>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className={`font-bold ${isDnp ? 'text-red-900 dark:text-red-100' : isWatch ? 'text-emerald-900 dark:text-emerald-100' : 'text-gray-900 dark:text-zinc-100'}`}>Team {team.id}</h3>
+                        {rowLabel}
+                        <Link href={`/teams/${team.id}?year=${currentEvent?.year}&regional=${currentEvent?.regional}`} className="text-[10px] text-purple-600 hover:underline">
+                          View Stats
+                        </Link>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-zinc-400 line-clamp-1">{team.name}</p>
                     </div>
-                    <p className="text-xs text-gray-500 dark:text-zinc-400 line-clamp-1">{team.name}</p>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => moveInPicklist(index, 'up')}
+                        disabled={index === 0}
+                        className="p-1 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded disabled:opacity-30"
+                      >
+                        <ChevronRight className="h-4 w-4 -rotate-90" />
+                      </button>
+                      <button 
+                        onClick={() => moveInPicklist(index, 'down')}
+                        disabled={index === picklist.length - 1}
+                        className="p-1 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded disabled:opacity-30"
+                      >
+                        <ChevronRight className="h-4 w-4 rotate-90" />
+                      </button>
+                      <button 
+                        onClick={() => removeFromPicklist(team.id)}
+                        className="p-1 hover:bg-red-50 text-red-400 hover:text-red-600 rounded"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
-                      onClick={() => moveInPicklist(index, 'up')}
-                      disabled={index === 0}
-                      className="p-1 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded disabled:opacity-30"
-                    >
-                      <ChevronRight className="h-4 w-4 -rotate-90" />
-                    </button>
-                    <button 
-                      onClick={() => moveInPicklist(index, 'down')}
-                      disabled={index === picklist.length - 1}
-                      className="p-1 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded disabled:opacity-30"
-                    >
-                      <ChevronRight className="h-4 w-4 rotate-90" />
-                    </button>
-                    <button 
-                      onClick={() => removeFromPicklist(team.id)}
-                      className="p-1 hover:bg-red-50 text-red-400 hover:text-red-600 rounded"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

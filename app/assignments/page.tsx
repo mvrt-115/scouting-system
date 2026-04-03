@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, deleteDoc, doc, getDocFromServer, getDocsFromServer, query, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocFromServer, getDocsFromServer, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { 
   Loader2, Calendar, CheckCircle, Clock, ArrowRightLeft, 
   Users, ArrowRight, X, ChevronDown, ChevronUp, Shield
@@ -57,6 +57,7 @@ export default function AssignmentsPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [year, setYear] = useState('2026');
+  const [regional, setRegional] = useState('practice');
 
   useEffect(() => {
     if (!isAuthChecking && !user) {
@@ -64,16 +65,18 @@ export default function AssignmentsPage() {
     }
   }, [isAuthChecking, router, user]);
 
-  const loadMyAssignments = useCallback(async () => {
+  useEffect(() => {
     if (!user) return;
     setIsLoading(true);
-    try {
-      // Get current event settings
+    
+    // Get current event settings first
+    const loadInitialData = async () => {
       const settingsDoc = await getDocFromServer(doc(db, 'settings', 'currentEvent'));
       const settings = settingsDoc.data() as any;
       const currentYear = String(settings?.year || '2026');
       const currentRegional = String(settings?.regional || 'practice');
       setYear(currentYear);
+      setRegional(currentRegional);
 
       // Load match teams data
       const matchTeamsSnapshot = await getDocsFromServer(collection(db, `years/${currentYear}/regionals/${currentRegional}/match_teams`));
@@ -94,37 +97,6 @@ export default function AssignmentsPage() {
       });
       setMatchTeams(matchTeamsMap);
 
-      // Load my assignments with team numbers
-      const assignmentsQuery = query(
-        collection(db, `years/${currentYear}/assignments`),
-        where('userId', '==', user.uid)
-      );
-      const assignmentsSnap = await getDocsFromServer(assignmentsQuery);
-      const assignments: AssignmentWithTeam[] = assignmentsSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as Assignment))
-        .map((assignment) => {
-          const matchNum = String(assignment.matchNumber || '');
-          const teams = matchTeamsMap[matchNum];
-          let teamNumber: string | undefined;
-          
-          if (teams && assignment.position) {
-            // Extract position index (e.g., "red_1" -> 0)
-            const posMatch = assignment.position.match(/_(\d)$/);
-            if (posMatch) {
-              const posIndex = parseInt(posMatch[1], 10) - 1;
-              if (assignment.position.startsWith('red') && teams.red?.[posIndex]) {
-                teamNumber = teams.red[posIndex];
-              } else if (assignment.position.startsWith('blue') && teams.blue?.[posIndex]) {
-                teamNumber = teams.blue[posIndex];
-              }
-            }
-          }
-          
-          return { ...assignment, teamNumber };
-        })
-        .sort((a, b) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
-      setMyAssignments(assignments);
-
       // Load all approved users for transfer
       const usersSnap = await getDocsFromServer(collection(db, 'users'));
       const users = usersSnap.docs
@@ -132,18 +104,81 @@ export default function AssignmentsPage() {
         .filter((u) => u.approved && u.id !== user.uid)
         .sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
       setAllUsers(users);
-    } catch (e) {
-      console.error('Error loading assignments:', e);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
 
-  useEffect(() => {
-    if (user) {
-      loadMyAssignments();
-    }
-  }, [user, loadMyAssignments]);
+      // Set up real-time listener for assignments using loaded values
+      const assignmentsQuery = query(
+        collection(db, `years/${currentYear}/assignments`),
+        where('userId', '==', user.uid),
+        where('regional', '==', currentRegional)
+      );
+
+      // First fetch from server
+      getDocsFromServer(assignmentsQuery).then((snapshot) => {
+        const assignments: AssignmentWithTeam[] = snapshot.docs
+          .map((d) => ({ id: d.id, ...d.data() } as Assignment))
+          .map((assignment) => {
+            const matchNum = String(assignment.matchNumber || '');
+            const teams = matchTeams[matchNum];
+            let teamNumber: string | undefined;
+            
+            if (teams && assignment.position) {
+              const posMatch = assignment.position.match(/_(\d)$/);
+              if (posMatch) {
+                const posIndex = parseInt(posMatch[1], 10) - 1;
+                if (assignment.position.startsWith('red') && teams.red?.[posIndex]) {
+                  teamNumber = teams.red[posIndex];
+                } else if (assignment.position.startsWith('blue') && teams.blue?.[posIndex]) {
+                  teamNumber = teams.blue[posIndex];
+                }
+              }
+            }
+            
+            return { ...assignment, teamNumber };
+          })
+          .sort((a, b) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
+        setMyAssignments(assignments);
+        setIsLoading(false);
+      }).catch((error) => {
+        console.error('Error fetching assignments from server:', error);
+        setIsLoading(false);
+      });
+      
+      // Then set up listener for updates (only apply non-cache updates)
+      const unsubscribe = onSnapshot(assignmentsQuery, { includeMetadataChanges: true }, (snapshot) => {
+        if (!snapshot.metadata.fromCache) {
+          const assignments: AssignmentWithTeam[] = snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() } as Assignment))
+            .map((assignment) => {
+              const matchNum = String(assignment.matchNumber || '');
+              const teams = matchTeams[matchNum];
+              let teamNumber: string | undefined;
+              
+              if (teams && assignment.position) {
+                const posMatch = assignment.position.match(/_(\d)$/);
+                if (posMatch) {
+                  const posIndex = parseInt(posMatch[1], 10) - 1;
+                  if (assignment.position.startsWith('red') && teams.red?.[posIndex]) {
+                    teamNumber = teams.red[posIndex];
+                  } else if (assignment.position.startsWith('blue') && teams.blue?.[posIndex]) {
+                    teamNumber = teams.blue[posIndex];
+                  }
+                }
+              }
+              
+              return { ...assignment, teamNumber };
+            })
+            .sort((a, b) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0));
+          setMyAssignments(assignments);
+        }
+      }, (error) => {
+        console.error('Error listening to assignments:', error);
+      });
+
+      return () => unsubscribe();
+    };
+
+    loadInitialData();
+  }, [user]);
 
   const handleTransferAssignments = async () => {
     if (!selectedTransferUser || selectedTransferAssignments.size === 0 || !user) return;
@@ -171,7 +206,7 @@ export default function AssignmentsPage() {
       setSelectedTransferAssignments(new Set());
       setShowTransferUI(false);
       setSelectedTransferUser('');
-      await loadMyAssignments();
+      // No need to reload - onSnapshot will update automatically
     } catch (err: any) {
       setError(err?.message || 'Failed to transfer assignments');
     } finally {

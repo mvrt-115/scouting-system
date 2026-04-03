@@ -4,10 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { doc, getDoc, getDocFromServer, setDoc } from 'firebase/firestore';
-import { ArrowLeft, CheckCircle2, CloudOff, Loader2, Save, ShieldAlert, Database } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, CloudOff, Loader2, Save, ShieldAlert, Database, Ban, Eye } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { queueSuperSubmission, saveSuperPayload } from '@/lib/offlineQueue';
+import { isTeamOnDnpList, isTeamOnWatchList, getDnpReason, getWatchReason } from '@/components/GlobalWidgets';
 
 type EventContext = {
   year: string;
@@ -56,57 +57,49 @@ export default function SuperScoutPage() {
       let loadedTeams: string[] | null = null;
       let loadedFromSource = false;
       const apiKey = process.env.NEXT_PUBLIC_TBA_API_KEY;
+      
+      console.log('Debug - regionalCode:', nextContext.regionalCode, 'apiKey exists:', !!apiKey, 'matchNumber:', matchNumber);
 
       if (nextContext.regionalCode && apiKey) {
         try {
-          // Try different match key formats (padded and non-padded)
-          const matchNum = parseInt(matchNumber, 10);
-          const matchKeyFormats = [
-            `${nextContext.regionalCode}_qm${matchNumber}`,
-            `${nextContext.regionalCode}_qm${matchNum.toString().padStart(2, '0')}`,
-            `${nextContext.regionalCode}_qm${matchNum.toString().padStart(3, '0')}`,
-          ];
+          // Fetch all matches for the event
+          const eventUrl = `https://www.thebluealliance.com/api/v3/event/${nextContext.regionalCode}/matches/simple`;
+          console.log('Debug - fetching event matches:', eventUrl);
           
-          for (const matchKey of matchKeyFormats) {
-            try {
-              const response = await fetch(`https://www.thebluealliance.com/api/v3/match/${matchKey}/simple`, {
-                headers: { 'X-TBA-Auth-Key': apiKey },
-              });
+          const response = await fetch(eventUrl, {
+            headers: { 'X-TBA-Auth-Key': apiKey },
+          });
 
-              if (response.ok) {
-                const matchData = await response.json();
-                loadedTeams = (matchData?.alliances?.[alliance]?.team_keys || []).map((teamKey: string) => String(teamKey).replace(/^frc/, ''));
-                if (loadedTeams && loadedTeams.length > 0) {
-                  loadedFromSource = true;
-                  break;
-                }
+          console.log('Debug - response status:', response.status);
+
+          if (response.ok) {
+            const matches = await response.json();
+            console.log('Debug - got', matches.length, 'matches');
+            
+            // Find the qualification match
+            const matchNum = parseInt(matchNumber, 10);
+            const match = matches.find((m: any) => 
+              m.comp_level === 'qm' && m.match_number === matchNum
+            );
+            
+            if (match) {
+              console.log('Debug - found match:', match.key);
+              loadedTeams = (match?.alliances?.[alliance]?.team_keys || []).map((teamKey: string) => String(teamKey).replace(/^frc/, ''));
+              console.log('Debug - loadedTeams:', loadedTeams);
+              if (loadedTeams && loadedTeams.length > 0) {
+                loadedFromSource = true;
               }
-            } catch {
-              // Continue to next format
+            } else {
+              console.log('Debug - match not found in event matches');
             }
+          } else {
+            console.log('Debug - failed to fetch matches:', await response.text());
           }
-        } catch {
-          // TBA fetch failed, will try cache next
+        } catch (e) {
+          console.log('Debug - TBA fetch failed:', e);
         }
-      }
-
-      if (!loadedTeams && nextContext.year && nextContext.regional && nextContext.regionalCode) {
-        const cachedMatchDoc = await getDocFromServer(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/ba_matches`, `${nextContext.regionalCode}_qm${matchNumber}`));
-        if (cachedMatchDoc.exists()) {
-          const cachedMatch = cachedMatchDoc.data() as any;
-          loadedTeams = (cachedMatch?.alliances?.[alliance]?.team_keys || []).map((teamKey: string) => String(teamKey).replace(/^frc/, ''));
-          loadedFromSource = true;
-        }
-      }
-
-      // Also check match_teams collection for manually saved teams
-      if (!loadedTeams && nextContext.year && nextContext.regional) {
-        const matchTeamDoc = await getDocFromServer(doc(db, `years/${nextContext.year}/regionals/${nextContext.regional}/match_teams`, `qm${matchNumber}_${alliance}`));
-        if (matchTeamDoc.exists()) {
-          const matchTeamData = matchTeamDoc.data() as any;
-          loadedTeams = matchTeamData.teams || [];
-          loadedFromSource = true;
-        }
+      } else {
+        console.log('Debug - missing regionalCode or apiKey');
       }
 
       setTeamsLoadedFromSource(loadedFromSource);
@@ -325,16 +318,39 @@ export default function SuperScoutPage() {
             <p className="text-sm text-slate-500 dark:text-slate-400">{eventContext.year} {eventContext.regional}</p>
           </div>
           <div className="flex items-center gap-2">
-            {teams.map((team, index) => (
-              <input
-                key={`${index}_${team}`}
-                value={team}
-                onChange={(event) => updateTeam(index, event.target.value)}
-                inputMode="numeric"
-                placeholder={`T${index + 1}`}
-                className="w-16 rounded-lg border border-purple-200 bg-white px-2 py-2 text-center text-sm font-bold text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
-              />
-            ))}
+            {teams.map((team, index) => {
+              const isDnp = team && isTeamOnDnpList(team);
+              const isWatch = team && isTeamOnWatchList(team);
+              const dnpReason = isDnp ? getDnpReason(team) : '';
+              const watchReason = isWatch ? getWatchReason(team) : '';
+              
+              let inputClass = "w-16 rounded-lg border border-purple-200 bg-white px-2 py-2 text-center text-sm font-bold text-purple-950 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white";
+              
+              if (isDnp) {
+                inputClass = "w-16 rounded-lg border-2 border-red-500 bg-red-50 px-2 py-2 text-center text-sm font-bold text-red-700 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-red-400 dark:bg-red-950/30 dark:text-red-300";
+              } else if (isWatch) {
+                inputClass = "w-16 rounded-lg border-2 border-emerald-500 bg-emerald-50 px-2 py-2 text-center text-sm font-bold text-emerald-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-400 dark:bg-emerald-950/30 dark:text-emerald-300";
+              }
+              
+              return (
+                <div key={`${index}_${team}`} className="relative group">
+                  <input
+                    value={team}
+                    onChange={(event) => updateTeam(index, event.target.value)}
+                    inputMode="numeric"
+                    placeholder={`T${index + 1}`}
+                    className={inputClass}
+                    title={dnpReason || watchReason || ''}
+                  />
+                  {isDnp && (
+                    <Ban className="absolute -top-2 -right-2 h-4 w-4 text-red-600" />
+                  )}
+                  {isWatch && (
+                    <Eye className="absolute -top-2 -right-2 h-4 w-4 text-emerald-600" />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -382,21 +398,54 @@ export default function SuperScoutPage() {
         <div className="space-y-3">
           <label className="block text-sm font-bold text-slate-700 dark:text-slate-200">Team Notes</label>
           {cleanTeams.length > 0 ? (
-            cleanTeams.map((team) => (
-              <div key={team} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/50">
-                <div className="mb-1 flex items-center gap-2">
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-purple-600 text-xs font-bold text-white">{team.slice(0, 2)}</span>
-                  <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Team {team}</span>
+            cleanTeams.map((team) => {
+              const isDnp = isTeamOnDnpList(team);
+              const isWatch = isTeamOnWatchList(team);
+              const dnpReason = isDnp ? getDnpReason(team) : '';
+              const watchReason = isWatch ? getWatchReason(team) : '';
+              
+              let cardClass = "rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/50";
+              let badgeClass = "inline-flex h-6 w-6 items-center justify-center rounded-full bg-purple-600 text-xs font-bold text-white";
+              
+              if (isDnp) {
+                cardClass = "rounded-lg border-2 border-red-400 bg-red-50/70 p-3 dark:border-red-500/50 dark:bg-red-950/20";
+                badgeClass = "inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white";
+              } else if (isWatch) {
+                cardClass = "rounded-lg border-2 border-emerald-400 bg-emerald-50/70 p-3 dark:border-emerald-500/50 dark:bg-emerald-950/20";
+                badgeClass = "inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white";
+              }
+              
+              return (
+                <div key={team} className={cardClass}>
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className={badgeClass}>{team.slice(0, 2)}</span>
+                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Team {team}</span>
+                    {isDnp && (
+                      <span className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400">
+                        <Ban className="h-3 w-3" /> DNP
+                      </span>
+                    )}
+                    {isWatch && (
+                      <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                        <Eye className="h-3 w-3" /> WATCH
+                      </span>
+                    )}
+                  </div>
+                  {(dnpReason || watchReason) && (
+                    <p className="mb-2 text-xs text-slate-500 dark:text-slate-400 italic">
+                      {dnpReason || watchReason}
+                    </p>
+                  )}
+                  <textarea
+                    value={formData.teamSpecificNotes[team] || ''}
+                    onChange={(event) => setFormData((current) => ({ ...current, teamSpecificNotes: { ...current.teamSpecificNotes, [team]: event.target.value } }))}
+                    rows={2}
+                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-slate-200"
+                    placeholder={`Notes for team ${team}...`}
+                  />
                 </div>
-                <textarea
-                  value={formData.teamSpecificNotes[team] || ''}
-                  onChange={(event) => setFormData((current) => ({ ...current, teamSpecificNotes: { ...current.teamSpecificNotes, [team]: event.target.value } }))}
-                  rows={2}
-                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-slate-200"
-                  placeholder={`Notes for team ${team}...`}
-                />
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500 dark:border-zinc-700 dark:bg-zinc-950/30 dark:text-slate-400">
               Enter team numbers above to add notes

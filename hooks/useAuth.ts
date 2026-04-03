@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { auth, db } from '@/lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, onSnapshot } from 'firebase/firestore';
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -38,7 +38,7 @@ export function useAuth() {
             setRole(nextRole);
           };
 
-          const initialDoc = await getDoc(userRef);
+          const initialDoc = await getDocFromServer(userRef);
           applyUserData(initialDoc.exists() ? initialDoc.data() : {});
 
           unsubscribeUserDoc = onSnapshot(

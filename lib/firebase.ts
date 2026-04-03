@@ -5,8 +5,14 @@ import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  setLogLevel,
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+
+// Suppress Firestore clock skew warnings in development
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  setLogLevel('silent');
+}
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyCII1qqTPZyOqv4-mWGDIdnRVzZwV1IP-4",

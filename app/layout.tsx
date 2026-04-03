@@ -3,6 +3,8 @@ import './globals.css'; // Global styles
 import { Navbar } from '@/components/Navbar';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
+import { OfflineBanner } from '@/components/OfflineBanner';
+import { GlobalWidgets } from '@/components/GlobalWidgets';
 
 export const metadata: Metadata = {
   title: 'MVRT Scout',
@@ -16,10 +18,12 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
       <body className="min-h-screen flex flex-col text-slate-950 dark:text-slate-100" suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <ServiceWorkerRegistration />
+          <OfflineBanner />
           <Navbar />
           <main className="flex-1">
             {children}
           </main>
+          <GlobalWidgets />
         </ThemeProvider>
       </body>
     </html>
